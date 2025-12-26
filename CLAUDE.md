@@ -36,7 +36,24 @@ cargo run -- --help
 
 # Check for outdated dependencies
 cargo make outdated
+
+# Sync Gateway API CRDs and regenerate Rust bindings
+cargo make gateway-api-sync
 ```
+
+## Gateway API CRDs
+
+This project uses Kubernetes Gateway API CRDs. The CRD definitions are stored in `.crds/v<version>/` and Rust bindings are generated using [kopium](https://github.com/kube-rs/kopium).
+
+**When to run `gateway-api-sync`:**
+- After changing `GATEWAY_API_VERSION` in `Makefile.toml`
+- When setting up a fresh clone of the repository
+- When Gateway API releases a new version you want to adopt
+
+**Related commands:**
+- `cargo make gateway-api-refresh` - Download and split CRD YAML files only
+- `cargo make gen-crds` - Regenerate Rust bindings from existing YAML files
+- `cargo make gateway-api-install` - Install CRDs into the current Kubernetes cluster
 
 ## Architecture
 

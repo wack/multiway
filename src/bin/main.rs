@@ -1,5 +1,5 @@
 use clap::{CommandFactory, Parser};
-use rust_cli_template::cli::Cli;
+use multiway::cli::Cli;
 
 fn main() -> miette::Result<()> {
     let cli = Cli::parse();
@@ -7,7 +7,9 @@ fn main() -> miette::Result<()> {
 }
 
 fn empty_command() -> miette::Result<()> {
-    Cli::command().print_long_help().expect("unable to print help message");
+    Cli::command()
+        .print_long_help()
+        .expect("unable to print help message");
     Ok(())
 }
 
