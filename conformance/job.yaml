@@ -1,0 +1,139 @@
+# Kubernetes Job for running Gateway API Conformance Tests
+#
+# This manifest creates:
+# - A ServiceAccount for the conformance tests
+# - A ClusterRole with permissions needed to run the tests
+# - A ClusterRoleBinding to bind the role to the service account
+# - A Job that runs the conformance test container
+#
+# Usage:
+#   kubectl apply -f job.yaml
+#   kubectl wait --for=condition=complete job/gateway-api-conformance -n gateway-conformance-infra --timeout=30m
+#   kubectl logs -n gateway-conformance-infra job/gateway-api-conformance
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gateway-conformance-infra
+  labels:
+    gateway-conformance: infra
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: conformance-test-runner
+  namespace: gateway-conformance-infra
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gateway-api-conformance
+rules:
+  # CRD access - conformance suite needs to verify Gateway API CRDs are installed
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources:
+      - customresourcedefinitions
+    verbs: ["get", "list", "watch"]
+  # Core resources needed for conformance tests
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - services
+      - endpoints
+      - pods
+      - secrets
+      - configmaps
+    verbs: ["*"]
+  # Deployments for backend services
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+    verbs: ["*"]
+  # Gateway API resources
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources:
+      - gatewayclasses
+      - gateways
+      - httproutes
+      - grpcroutes
+      - tcproutes
+      - udproutes
+      - tlsroutes
+      - referencegrants
+      - backendtlspolicies
+    verbs: ["*"]
+  # Status updates
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources:
+      - gatewayclasses/status
+      - gateways/status
+      - httproutes/status
+      - grpcroutes/status
+      - tcproutes/status
+      - udproutes/status
+      - tlsroutes/status
+      - backendtlspolicies/status
+    verbs: ["get", "update", "patch"]
+  # Events for debugging
+  - apiGroups: [""]
+    resources:
+      - events
+    verbs: ["create", "patch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gateway-api-conformance
+subjects:
+  - kind: ServiceAccount
+    name: conformance-test-runner
+    namespace: gateway-conformance-infra
+roleRef:
+  kind: ClusterRole
+  name: gateway-api-conformance
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gateway-api-conformance
+  namespace: gateway-conformance-infra
+  labels:
+    app: gateway-api-conformance
+spec:
+  # Don't retry failed tests
+  backoffLimit: 0
+  # Keep job for 1 hour after completion for log retrieval
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: gateway-api-conformance
+    spec:
+      serviceAccountName: conformance-test-runner
+      restartPolicy: Never
+      containers:
+        - name: conformance
+          image: multiway-conformance:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: GATEWAY_CLASS_NAME
+              value: "multiway"
+            - name: SUPPORTED_FEATURES
+              value: "Gateway,HTTPRoute"
+            - name: CLEANUP_BASE_RESOURCES
+              value: "true"
+            - name: SHOW_DEBUG
+              value: "false"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
