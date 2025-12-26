@@ -1,3 +1,10 @@
+use version::Version;
+use controller::Controller;
+use gateway::Gateway;
+
+mod version;
+mod gateway;
+mod controller;
 mod colors;
 
 pub use colors::EnableColors;
@@ -50,10 +57,18 @@ pub struct Cli {
 pub enum CliCommand {
     /// Print the CLI version and exit
     Version,
+    /// Run the gateway
+    Gateway,
+    /// Run the controller
+    Controller,
 }
 
 impl CliCommand {
     pub fn dispatch(self) -> miette::Result<()> {
-        todo!()
+        match self {
+            Self::Version => Version::new().dispatch(),
+            Self::Gateway => Gateway::new().dispatch(),
+            Self::Controller => Controller::new().dispatch(),
+        }
     }
 }
