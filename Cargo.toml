@@ -1,0 +1,23 @@
+[package]
+name = "rust-cli-template"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "rust-cli-template"
+path = "src/bin/main.rs"
+
+[dependencies]
+async-trait = "0.1.89"
+bon = "3.8.1"
+chrono = "0.4.42"
+clap = { version = "4.5.53", features = ["derive", "env"] }
+miette = { version = "7.6.0", features = ["fancy"] }
+nutype = { version = "0.6.2", features = ["serde"] }
+pretty_assertions = "1.4.1"
+serde = { version = "1.0.228", features = ["derive"] }
+static_assertions = "1.1.0"
+thiserror = "2.0.17"
+tokio = { version = "1.48.0", features = ["full"] }
+tracing = { version = "0.1.43", features = ["attributes"] }
+tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
