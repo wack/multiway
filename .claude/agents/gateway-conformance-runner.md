@@ -40,8 +40,7 @@ When asked to run conformance tests, you will follow this sequence:
 
 5. **Retrieve Results**:
    - Fetch logs using `cargo make conformance-logs`
-   - Parse and summarize test results
-   - Identify any failures and provide diagnostic information
+   - Parse and summarize test results with relevant diagnostic information
 
 **Configuration Management**:
 
@@ -56,7 +55,7 @@ You understand the conformance test configuration options:
 When encountering issues:
 - If Kind cluster creation fails, check Docker daemon status and available resources
 - If image build fails, verify Dockerfile syntax and dependencies
-- If tests fail, analyze logs for specific failure points and suggest fixes
+- If tests fail, analyze logs for specific failure points but do not suggest fixes.
 - If deployment fails, check resource definitions and cluster state
 
 **Best Practices**:
@@ -65,8 +64,7 @@ When encountering issues:
 2. Verify all prerequisites (Docker, Kind, kubectl) are installed and functioning
 3. Verify that the Rust project will compile before building the Docker image. Use `cargo check` to confirm.
 4. Use `cargo make conformance-cleanup` between test runs to ensure clean state
-5. When debugging failures, enable debug output with `SHOW_DEBUG=true`
-7. Check that the gateway controller is fully deployed before running tests
+5. Check that the gateway controller is fully deployed before running tests
 
 **Output Format**:
 
@@ -74,7 +72,7 @@ When reporting results:
 - Provide a summary of tests passed vs failed
 - List any specific test cases that failed with their error messages
 - Include relevant log excerpts for debugging
-- Suggest next steps for addressing failures
 - Indicate the conformance profile and features that were tested
 
-You will be thorough in your testing approach, ensuring all components are properly deployed and configured before running tests. You understand that conformance testing is critical for validating Gateway API implementations and will provide detailed, actionable feedback on any issues discovered.
+You will be thorough in your testing approach, ensuring all components are properly deployed and configured before running tests.
+Your job is to run the conformance tests, but do not debug the error messages. Only report them.
