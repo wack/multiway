@@ -5,16 +5,24 @@
 //! Controller, in particular, responds to changes in GatewayClass
 //! resources, along with Gateways.
 
-use std::sync::Arc;
 use std::future::ready;
+use std::sync::Arc;
 
-use miette::{WrapErr, Diagnostic, Result, IntoDiagnostic as _};
-use kube::{api::{Patch, PatchParams},ResourceExt, Api, Client, runtime::{watcher, controller::{Action, Controller as K8sController}}};
+use futures::StreamExt;
 use gateway_crds::GatewayClass;
-use tokio::{time::Duration, runtime::Runtime};
-use tracing::info;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::{Condition, Time};
-use k8s_openapi::{serde_json::json, chrono::Utc};
+use k8s_openapi::{chrono::Utc, serde_json::json};
+use kube::{
+    Api, Client, ResourceExt,
+    api::{Patch, PatchParams},
+    runtime::{
+        controller::{Action, Controller as K8sController},
+        watcher,
+    },
+};
+use miette::{Diagnostic, IntoDiagnostic as _, Result, WrapErr};
+use tokio::{runtime::Runtime, time::Duration};
+use tracing::info;
 
 /// Run the API Gateway Controller
 pub struct Controller;
@@ -47,22 +55,23 @@ impl Controller {
         let config = watcher::Config::default();
         let gateway_class_controller = K8sController::new(gateway_classes.clone(), config);
         // • Run the controller.
-        Self::run_gateway_class_control_loop(gateway_class_controller).await
+        Self::run_gateway_class_control_loop(gateway_class_controller).await;
+        Ok(())
 
         // Watch for changes to GatewayClass resources.
         // • Create the Gateway Class controllr, which watches
         //   only for changes to the Gateway Class.
         // let gateway_class_controller = K8sController::new(gateway_classes.clone());
-            // .run(reconcile_gateway_class, error_policy_gateway_class, Arc::new(()))
-            // .for_each(|_| ready(()));
+        // .run(reconcile_gateway_class, error_policy_gateway_class, Arc::new(()))
+        // .for_each(|_| ready(()));
     }
 
-    async fn run_gateway_class_control_loop(ctrl: K8sController<GatewayClass>) -> Result<()> {
+    async fn run_gateway_class_control_loop(ctrl: K8sController<GatewayClass>) {
         // We don't share any state, so we pass the unit struct here.
         let shared_state = Arc::new(());
-        // ctrl.run(reconcile_gateway_class,error_policy, shared_state).for_each(|_| ready(()));
-        // TODO: I don't think this should ever return.
-        Ok(())
+        ctrl.run(reconcile_gateway_class, error_policy, shared_state)
+            .for_each(|_| ready(()))
+            .await;
     }
 
     /// Attempt to create the client, converting it into a proper
@@ -76,7 +85,10 @@ impl Controller {
 }
 
 // TODO: I need to make sure I understand exactly what this is doing and why.
-async fn reconcile_gateway_class(obj: Arc<GatewayClass>, _ctx: Arc<()>) -> Result<Action> {
+async fn reconcile_gateway_class(
+    obj: Arc<GatewayClass>,
+    _ctx: Arc<()>,
+) -> Result<Action, MultiwayError> {
     info!("reconcile request: {}", obj.name_any());
 
     if obj.spec.controller_name != "multitool.run/multitool" {
@@ -85,9 +97,10 @@ async fn reconcile_gateway_class(obj: Arc<GatewayClass>, _ctx: Arc<()>) -> Resul
 
     // Check if status is already set to Accepted
     if !is_accepted(&*obj) {
-        update_gateway_class_status(&*obj).await.map_err(MultiwayError::from)?;
+        update_gateway_class_status(&*obj)
+            .await
+            .map_err(MultiwayError::from)?;
         info!("Updated GatewayClass {} status to Accepted", obj.name_any());
-        
     }
 
     Ok(Action::requeue(Duration::from_secs(3600)))
@@ -149,8 +162,7 @@ fn error_policy(_object: Arc<GatewayClass>, _err: &MultiwayError, _ctx: Arc<()>)
 pub enum MultiwayError {
     // #[error("Could not create Kubernetes client: {0}")]
     #[error(transparent)]
-    KubernetesError(#[from] kube::Error)
-    // ClientCreationError(#[from] kube::Error),
-    // #[error("Could not update GatewayClass: {0}")]
-    // UpdateGatewayClassError(#[from] kube::Error),
+    KubernetesError(#[from] kube::Error), // ClientCreationError(#[from] kube::Error),
+                                          // #[error("Could not update GatewayClass: {0}")]
+                                          // UpdateGatewayClassError(#[from] kube::Error),
 }
