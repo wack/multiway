@@ -16,7 +16,21 @@ gateway-crds = { path = "crates/gateway-crds" }
 bon = "3.8.1"
 chrono = "0.4.42"
 clap = { version = "4.5.53", features = ["derive", "env"] }
-k8s-openapi = { version = "0.26", features = ["latest", "schemars"] }
+k8s-openapi.workspace = true
+kube.workspace = true
+miette = { version = "7.6.0", features = ["fancy"] }
+nutype = { version = "0.6.2", features = ["serde"] }
+pretty_assertions = "1.4.1"
+schemars = "1.2.0"
+serde.workspace = true
+static_assertions = "1.1.0"
+thiserror = "2.0.17"
+tokio = { version = "1.48.0", features = ["full"] }
+tracing = { version = "0.1.43", features = ["attributes"] }
+tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
+
+
+[workspace.dependencies]
 kube = { version = "2.0", default-features = false, features = [
   "runtime",
   "derive",
@@ -24,15 +38,6 @@ kube = { version = "2.0", default-features = false, features = [
   "rustls-tls",
   "aws-lc-rs",
 ] }
-miette = { version = "7.6.0", features = ["fancy"] }
-nutype = { version = "0.6.2", features = ["serde"] }
-pretty_assertions = "1.4.1"
-schemars = "1.2.0"
-serde = { version = "1.0.228", features = ["derive"] }
-static_assertions = "1.1.0"
-thiserror = "2.0.17"
-tokio = { version = "1.48.0", features = ["full"] }
-tracing = { version = "0.1.43", features = ["attributes"] }
-tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
-
-[workspace.dependencies]
+k8s-openapi = { version = "0.26", features = ["latest", "schemars"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
