@@ -1,0 +1,15 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: multiway-controller
+  labels:
+    app.kubernetes.io/name: multiway
+    app.kubernetes.io/component: controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: multiway-controller
+subjects:
+  - kind: ServiceAccount
+    name: multiway-controller
+    namespace: multiway-system

@@ -4,11 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [[bin]]
-name = "rust-cli-template"
+name = "multiway"
 path = "src/bin/main.rs"
 
 [workspace]
-members = ["crates/gateway-crds"]
+members = ["crates/gateway-crds", "crates/dataplane"]
 
 [dependencies]
 async-trait = "0.1.89"
@@ -23,6 +23,7 @@ nutype = { version = "0.6.2", features = ["serde"] }
 pretty_assertions = "1.4.1"
 schemars = "1.2.0"
 serde.workspace = true
+serde_json.workspace = true
 static_assertions = "1.1.0"
 thiserror = "2.0.17"
 tokio = { version = "1.48.0", features = ["full"] }

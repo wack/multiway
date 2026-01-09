@@ -1,0 +1,54 @@
+[package]
+name = "multiway-dataplane"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "multiway-dataplane"
+path = "src/main.rs"
+
+[dependencies]
+# Pingora - CloudFlare's async HTTP proxy library
+pingora = { version = "0.6", features = ["lb"] }
+pingora-core = "0.6"
+pingora-http = "0.6"
+pingora-proxy = "0.6"
+pingora-load-balancing = "0.6"
+
+# Async runtime
+tokio = { version = "1.48", features = ["full"] }
+async-trait = "0.1"
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Configuration watching
+notify = "7.0"
+
+# HTTP types
+http = "1.0"
+bytes = "1.0"
+
+# Regex for path matching
+regex = "1.0"
+
+# URL parsing
+url = "2.5"
+
+# CLI
+clap = { version = "4.5", features = ["derive", "env"] }
+
+# Arc swap for hot-reload
+arc-swap = "1.7"
+
+[dev-dependencies]
+tokio-test = "0.4"
