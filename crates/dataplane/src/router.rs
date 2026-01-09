@@ -4,7 +4,6 @@
 //! It matches incoming requests against configured routes and selects the
 //! appropriate backend.
 
-
 use regex::Regex;
 use tracing::trace;
 
@@ -645,15 +644,7 @@ mod tests {
         );
         assert!(result.route.is_some());
 
-        let result = router.route(
-            &config,
-            "http",
-            Some("example.com"),
-            "/",
-            "GET",
-            &[],
-            &[],
-        );
+        let result = router.route(&config, "http", Some("example.com"), "/", "GET", &[], &[]);
         assert!(result.route.is_some());
     }
 
