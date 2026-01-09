@@ -247,6 +247,7 @@ pub async fn get_accepted_gateway_class(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gateway_crds::GatewayClassParametersRef;
 
     fn create_test_gateway_class(controller_name: &str) -> GatewayClass {
         GatewayClass {
@@ -264,6 +265,32 @@ mod tests {
         }
     }
 
+    // ==========================================
+    // GatewayClass Spec Compliance Tests
+    // ==========================================
+
+    /// Spec: GatewayClass.spec.controllerName determines which controller is responsible
+    /// Controllers should only respond to GatewayClasses with matching controllerName
+    #[test]
+    fn test_controller_name_matching() {
+        // Our controller name should be accepted
+        let gc = create_test_gateway_class(CONTROLLER_NAME);
+        let (accepted, reason, _) = validate_gateway_class(&gc);
+        assert!(accepted);
+        assert_eq!(reason, "Accepted");
+    }
+
+    /// Spec: Controller name format is recommended to be domain/path
+    /// Our controller name follows this convention: io.multiway/gateway-controller
+    #[test]
+    fn test_controller_name_format() {
+        // Verify our controller name follows domain/path convention
+        assert!(CONTROLLER_NAME.contains('/'));
+        assert!(CONTROLLER_NAME.starts_with("io.multiway"));
+    }
+
+    /// Spec: A new GatewayClass should start with Accepted=False until processed
+    /// Once processed, condition should be set to True
     #[test]
     fn test_validate_gateway_class() {
         let gc = create_test_gateway_class(CONTROLLER_NAME);
@@ -272,17 +299,51 @@ mod tests {
         assert_eq!(reason, "Accepted");
     }
 
+    /// Spec: parametersRef allows passing controller-specific parameters
+    /// Our implementation logs but ignores parametersRef (still accepts the class)
+    #[test]
+    fn test_gateway_class_with_parameters_ref() {
+        let mut gc = create_test_gateway_class(CONTROLLER_NAME);
+        gc.spec.parameters_ref = Some(GatewayClassParametersRef {
+            group: "example.net".to_string(),
+            kind: "Config".to_string(),
+            name: "my-config".to_string(),
+            namespace: Some("default".to_string()),
+        });
+
+        // Should still be accepted even with parametersRef
+        let (accepted, reason, _) = validate_gateway_class(&gc);
+        assert!(accepted);
+        assert_eq!(reason, "Accepted");
+    }
+
+    /// Spec: GatewayClass with optional description field
+    #[test]
+    fn test_gateway_class_with_description() {
+        let mut gc = create_test_gateway_class(CONTROLLER_NAME);
+        gc.spec.description = Some("A test gateway class for unit testing".to_string());
+
+        let (accepted, reason, _) = validate_gateway_class(&gc);
+        assert!(accepted);
+        assert_eq!(reason, "Accepted");
+    }
+
+    // ==========================================
+    // GatewayClass Status Tests
+    // ==========================================
+
+    /// Spec: is_gateway_class_accepted should check both controllerName AND status
     #[test]
     fn test_is_gateway_class_accepted() {
-        // Not our controller
+        // Not our controller - should return false regardless of status
         let gc = create_test_gateway_class("other-controller");
         assert!(!is_gateway_class_accepted(&gc));
 
-        // Our controller but no status
+        // Our controller but no status - should return false
         let gc = create_test_gateway_class(CONTROLLER_NAME);
         assert!(!is_gateway_class_accepted(&gc));
 
-        // Our controller with accepted status
+        // Our controller with accepted status - should return true
         let mut gc = create_test_gateway_class(CONTROLLER_NAME);
         gc.status = Some(GatewayClassStatus {
             conditions: Some(vec![Condition {
@@ -298,10 +359,115 @@ mod tests {
         assert!(is_gateway_class_accepted(&gc));
     }
 
+    /// Spec: Accepted condition with status=False means class is not usable
+    #[test]
+    fn test_is_gateway_class_not_accepted_with_false_status() {
+        let mut gc = create_test_gateway_class(CONTROLLER_NAME);
+        gc.status = Some(GatewayClassStatus {
+            conditions: Some(vec![Condition {
+                type_: "Accepted".to_string(),
+                status: "False".to_string(),
+                observed_generation: Some(1),
+                last_transition_time: Time(Utc::now()),
+                reason: "InvalidConfiguration".to_string(),
+                message: "Configuration is invalid".to_string(),
+            }]),
+            supported_features: None,
+        });
+        assert!(!is_gateway_class_accepted(&gc));
+    }
+
+    /// Spec: observedGeneration should track which generation was processed
+    #[test]
+    fn test_observed_generation_tracking() {
+        let mut gc = create_test_gateway_class(CONTROLLER_NAME);
+        gc.metadata.generation = Some(5);
+        gc.status = Some(GatewayClassStatus {
+            conditions: Some(vec![Condition {
+                type_: "Accepted".to_string(),
+                status: "True".to_string(),
+                observed_generation: Some(5),
+                last_transition_time: Time(Utc::now()),
+                reason: "Accepted".to_string(),
+                message: "Accepted".to_string(),
+            }]),
+            supported_features: None,
+        });
+
+        // Should be accepted when observedGeneration matches resource generation
+        assert!(is_gateway_class_accepted(&gc));
+    }
+
+    /// Spec: Empty conditions list should be treated as not accepted
+    #[test]
+    fn test_empty_conditions_not_accepted() {
+        let mut gc = create_test_gateway_class(CONTROLLER_NAME);
+        gc.status = Some(GatewayClassStatus {
+            conditions: Some(vec![]),
+            supported_features: None,
+        });
+        assert!(!is_gateway_class_accepted(&gc));
+    }
+
+    /// Spec: Missing Accepted condition type should be treated as not accepted
+    #[test]
+    fn test_missing_accepted_condition() {
+        let mut gc = create_test_gateway_class(CONTROLLER_NAME);
+        gc.status = Some(GatewayClassStatus {
+            conditions: Some(vec![Condition {
+                type_: "SomeOtherCondition".to_string(),
+                status: "True".to_string(),
+                observed_generation: Some(1),
+                last_transition_time: Time(Utc::now()),
+                reason: "Something".to_string(),
+                message: "Something".to_string(),
+            }]),
+            supported_features: None,
+        });
+        assert!(!is_gateway_class_accepted(&gc));
+    }
+
+    // ==========================================
+    // Supported Features Tests (Core Gateway API features)
+    // ==========================================
+
+    /// Spec: Core features must be supported by implementations
     #[test]
     fn test_supported_features() {
+        // Core features
         assert!(SUPPORTED_FEATURES.contains(&"Gateway"));
         assert!(SUPPORTED_FEATURES.contains(&"HTTPRoute"));
+    }
+
+    /// Spec: Extended features for HTTPRoute matching
+    #[test]
+    fn test_extended_httproute_matching_features() {
+        assert!(SUPPORTED_FEATURES.contains(&"HTTPRouteMethodMatching"));
+        assert!(SUPPORTED_FEATURES.contains(&"HTTPRouteQueryParamMatching"));
+    }
+
+    /// Spec: Extended features for HTTPRoute filters
+    #[test]
+    fn test_extended_httproute_filter_features() {
         assert!(SUPPORTED_FEATURES.contains(&"HTTPRouteRequestHeaderModifier"));
+        assert!(SUPPORTED_FEATURES.contains(&"HTTPRouteResponseHeaderModifier"));
+        assert!(SUPPORTED_FEATURES.contains(&"HTTPRouteRequestRedirect"));
+        assert!(SUPPORTED_FEATURES.contains(&"HTTPRouteRequestMirror"));
+    }
+
+    /// Spec: Extended features for HTTPRoute rewrites
+    #[test]
+    fn test_extended_httproute_rewrite_features() {
+        assert!(SUPPORTED_FEATURES.contains(&"HTTPRouteHostRewrite"));
+        assert!(SUPPORTED_FEATURES.contains(&"HTTPRoutePathRewrite"));
+        assert!(SUPPORTED_FEATURES.contains(&"HTTPRoutePathRedirect"));
+        assert!(SUPPORTED_FEATURES.contains(&"HTTPRouteSchemeRedirect"));
+        assert!(SUPPORTED_FEATURES.contains(&"HTTPRoutePortRedirect"));
+    }
+
+    /// Spec: Backend destination port matching feature
+    #[test]
+    fn test_backend_destination_port_feature() {
+        assert!(SUPPORTED_FEATURES.contains(&"HTTPRouteDestinationPortMatching"));
     }
 }

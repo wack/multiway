@@ -40,8 +40,8 @@ use tokio::time::Duration;
 use tracing::{debug, error, info, instrument, warn};
 
 use super::config::{
-    CONFIG_KEY, DataPlaneNames, GATEWAY_NAME_LABEL,
-    GatewayConfig, ListenerConfig, MANAGED_BY_LABEL, MANAGED_BY_VALUE, Protocol,
+    CONFIG_KEY, DataPlaneNames, GatewayConfig, ListenerConfig, MANAGED_BY_LABEL, MANAGED_BY_VALUE,
+    Protocol,
 };
 use super::context::ControllerContext;
 use super::error::{ControllerError, Result};
@@ -681,24 +681,102 @@ pub enum AllowedNamespaces {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::controller::config::GATEWAY_NAME_LABEL;
+    use gateway_crds::{
+        GatewayListenersAllowedRoutes, GatewayListenersAllowedRoutesNamespaces,
+        GatewayListenersTls, GatewayListenersTlsMode,
+    };
 
-    #[test]
-    fn test_validate_listeners_http() {
-        let listeners = vec![GatewayListeners {
-            name: "http".to_string(),
-            port: 80,
+    fn create_http_listener(name: &str, port: i32) -> GatewayListeners {
+        GatewayListeners {
+            name: name.to_string(),
+            port,
             protocol: "HTTP".to_string(),
             hostname: None,
             allowed_routes: None,
             tls: None,
-        }];
+        }
+    }
 
+    fn create_https_listener(name: &str, port: i32) -> GatewayListeners {
+        GatewayListeners {
+            name: name.to_string(),
+            port,
+            protocol: "HTTPS".to_string(),
+            hostname: Some("example.com".to_string()),
+            allowed_routes: None,
+            tls: Some(GatewayListenersTls {
+                mode: Some(GatewayListenersTlsMode::Terminate),
+                certificate_refs: Some(vec![]),
+                options: None,
+            }),
+        }
+    }
+
+    // ==========================================
+    // Listener Validation Tests (Gateway Spec)
+    // ==========================================
+
+    /// Spec: HTTP protocol is valid for listeners
+    #[test]
+    fn test_validate_listeners_http() {
+        let listeners = vec![create_http_listener("http", 80)];
         let (valid, statuses) = validate_listeners(&listeners);
         assert!(valid);
         assert_eq!(statuses.len(), 1);
         assert!(statuses[0].valid);
     }
 
+    /// Spec: HTTPS protocol requires TLS configuration
+    #[test]
+    fn test_validate_listeners_https_with_tls() {
+        let listeners = vec![create_https_listener("https", 443)];
+        let (valid, statuses) = validate_listeners(&listeners);
+        assert!(valid);
+        assert!(statuses[0].valid);
+    }
+
+    /// Spec: HTTPS without TLS config should be invalid
+    #[test]
+    fn test_validate_listeners_https_without_tls() {
+        let listeners = vec![GatewayListeners {
+            name: "https".to_string(),
+            port: 443,
+            protocol: "HTTPS".to_string(),
+            hostname: None,
+            allowed_routes: None,
+            tls: None, // Missing TLS config
+        }];
+
+        let (valid, statuses) = validate_listeners(&listeners);
+        assert!(!valid);
+        assert!(!statuses[0].valid);
+        assert_eq!(statuses[0].reason, "InvalidTLS");
+    }
+
+    /// Spec: HTTP with TLS config should be invalid
+    #[test]
+    fn test_validate_listeners_http_with_tls() {
+        let listeners = vec![GatewayListeners {
+            name: "http".to_string(),
+            port: 80,
+            protocol: "HTTP".to_string(),
+            hostname: None,
+            allowed_routes: None,
+            tls: Some(GatewayListenersTls {
+                mode: Some(GatewayListenersTlsMode::Terminate),
+                certificate_refs: Some(vec![]),
+                options: None,
+            }),
+        }];
+
+        let (valid, statuses) = validate_listeners(&listeners);
+        assert!(!valid);
+        assert!(!statuses[0].valid);
+        assert_eq!(statuses[0].reason, "InvalidTLS");
+    }
+
+    /// Spec: Unsupported protocol should be rejected
     #[test]
     fn test_validate_listeners_invalid_protocol() {
         let listeners = vec![GatewayListeners {
@@ -716,13 +794,191 @@ mod tests {
         assert_eq!(statuses[0].reason, "UnsupportedProtocol");
     }
 
+    /// Spec: Protocol matching should be case-insensitive
+    #[test]
+    fn test_validate_listeners_protocol_case_insensitive() {
+        let listeners = vec![
+            GatewayListeners {
+                name: "http1".to_string(),
+                port: 80,
+                protocol: "http".to_string(), // lowercase
+                hostname: None,
+                allowed_routes: None,
+                tls: None,
+            },
+            GatewayListeners {
+                name: "http2".to_string(),
+                port: 8080,
+                protocol: "Http".to_string(), // mixed case
+                hostname: None,
+                allowed_routes: None,
+                tls: None,
+            },
+        ];
+
+        let (valid, statuses) = validate_listeners(&listeners);
+        assert!(valid);
+        assert!(statuses[0].valid);
+        assert!(statuses[1].valid);
+    }
+
+    /// Spec: Port must be in valid range (1-65535)
+    #[test]
+    fn test_validate_listeners_port_range() {
+        // Valid port
+        let listeners = vec![create_http_listener("http", 8080)];
+        let (valid, _) = validate_listeners(&listeners);
+        assert!(valid);
+
+        // Port 0 is invalid
+        let listeners = vec![create_http_listener("http", 0)];
+        let (valid, statuses) = validate_listeners(&listeners);
+        assert!(!valid);
+        assert_eq!(statuses[0].reason, "InvalidPort");
+
+        // Negative port is invalid
+        let listeners = vec![create_http_listener("http", -1)];
+        let (valid, statuses) = validate_listeners(&listeners);
+        assert!(!valid);
+        assert_eq!(statuses[0].reason, "InvalidPort");
+    }
+
+    /// Spec: Multiple listeners can be defined on a Gateway
+    #[test]
+    fn test_validate_multiple_listeners() {
+        let listeners = vec![
+            create_http_listener("http", 80),
+            create_https_listener("https", 443),
+            create_http_listener("http-alt", 8080),
+        ];
+
+        let (valid, statuses) = validate_listeners(&listeners);
+        assert!(valid);
+        assert_eq!(statuses.len(), 3);
+        assert!(statuses.iter().all(|s| s.valid));
+    }
+
+    /// Spec: One invalid listener should mark the whole Gateway invalid
+    #[test]
+    fn test_validate_listeners_partial_invalid() {
+        let listeners = vec![
+            create_http_listener("http", 80),
+            GatewayListeners {
+                name: "invalid".to_string(),
+                port: 80,
+                protocol: "GRPC".to_string(), // Not supported
+                hostname: None,
+                allowed_routes: None,
+                tls: None,
+            },
+        ];
+
+        let (valid, statuses) = validate_listeners(&listeners);
+        assert!(!valid);
+        assert!(statuses[0].valid); // First listener is valid
+        assert!(!statuses[1].valid); // Second listener is invalid
+    }
+
+    // ==========================================
+    // AllowedNamespaces Tests (Gateway Spec)
+    // ==========================================
+
+    /// Spec: Default allowed namespaces is "Same" (same namespace as Gateway)
+    #[test]
+    fn test_allowed_namespaces_default() {
+        let listener = create_http_listener("http", 80);
+        let allowed = get_allowed_route_namespaces(&listener, "default");
+
+        match allowed {
+            AllowedNamespaces::Same(ns) => assert_eq!(ns, "default"),
+            _ => panic!("Expected Same namespace"),
+        }
+    }
+
+    /// Spec: "All" allows routes from any namespace
+    #[test]
+    fn test_allowed_namespaces_all() {
+        let mut listener = create_http_listener("http", 80);
+        listener.allowed_routes = Some(GatewayListenersAllowedRoutes {
+            kinds: None,
+            namespaces: Some(GatewayListenersAllowedRoutesNamespaces {
+                from: Some(GatewayListenersAllowedRoutesNamespacesFrom::All),
+                selector: None,
+            }),
+        });
+
+        let allowed = get_allowed_route_namespaces(&listener, "default");
+        assert!(matches!(allowed, AllowedNamespaces::All));
+    }
+
+    /// Spec: "Same" only allows routes from Gateway's namespace
+    #[test]
+    fn test_allowed_namespaces_same() {
+        let mut listener = create_http_listener("http", 80);
+        listener.allowed_routes = Some(GatewayListenersAllowedRoutes {
+            kinds: None,
+            namespaces: Some(GatewayListenersAllowedRoutesNamespaces {
+                from: Some(GatewayListenersAllowedRoutesNamespacesFrom::Same),
+                selector: None,
+            }),
+        });
+
+        let allowed = get_allowed_route_namespaces(&listener, "my-namespace");
+        match allowed {
+            AllowedNamespaces::Same(ns) => assert_eq!(ns, "my-namespace"),
+            _ => panic!("Expected Same namespace"),
+        }
+    }
+
+    /// Spec: "Selector" allows routes from namespaces matching labels
+    #[test]
+    fn test_allowed_namespaces_selector() {
+        use gateway_crds::GatewayListenersAllowedRoutesNamespacesSelector;
+
+        let mut selector_labels = BTreeMap::new();
+        selector_labels.insert("env".to_string(), "production".to_string());
+
+        let mut listener = create_http_listener("http", 80);
+        listener.allowed_routes = Some(GatewayListenersAllowedRoutes {
+            kinds: None,
+            namespaces: Some(GatewayListenersAllowedRoutesNamespaces {
+                from: Some(GatewayListenersAllowedRoutesNamespacesFrom::Selector),
+                selector: Some(GatewayListenersAllowedRoutesNamespacesSelector {
+                    match_labels: Some(selector_labels.clone()),
+                    match_expressions: None,
+                }),
+            }),
+        });
+
+        let allowed = get_allowed_route_namespaces(&listener, "default");
+        match allowed {
+            AllowedNamespaces::Selector { match_labels } => {
+                assert_eq!(match_labels.get("env"), Some(&"production".to_string()));
+            }
+            _ => panic!("Expected Selector namespace"),
+        }
+    }
+
+    // ==========================================
+    // Data Plane Names Tests
+    // ==========================================
+
+    /// Spec: Data plane resources should have consistent naming
     #[test]
     fn test_data_plane_names() {
         let names = DataPlaneNames::new("default", "my-gateway");
         assert_eq!(names.deployment_name(), "multiway-dp-my-gateway");
         assert_eq!(names.configmap_name(), "multiway-config-my-gateway");
+        assert_eq!(names.service_name(), "multiway-dp-my-gateway");
+        assert_eq!(names.namespace(), "default");
+    }
 
+    /// Spec: Labels should include managed-by and gateway references
+    #[test]
+    fn test_data_plane_labels() {
+        let names = DataPlaneNames::new("default", "my-gateway");
         let labels = names.labels();
+
         assert_eq!(
             labels.get(MANAGED_BY_LABEL),
             Some(&MANAGED_BY_VALUE.to_string())
@@ -731,5 +987,88 @@ mod tests {
             labels.get(GATEWAY_NAME_LABEL),
             Some(&"my-gateway".to_string())
         );
+        assert_eq!(
+            labels.get("gateway.networking.k8s.io/gateway-namespace"),
+            Some(&"default".to_string())
+        );
+    }
+
+    /// Spec: Selector labels should uniquely identify pods
+    #[test]
+    fn test_data_plane_selector_labels() {
+        let names = DataPlaneNames::new("default", "my-gateway");
+        let selector = names.selector_labels();
+
+        // Selector should have gateway name
+        assert_eq!(
+            selector.get(GATEWAY_NAME_LABEL),
+            Some(&"my-gateway".to_string())
+        );
+
+        // Selector should have component
+        assert_eq!(
+            selector.get("app.kubernetes.io/component"),
+            Some(&"dataplane".to_string())
+        );
+    }
+
+    // ==========================================
+    // Gateway Config Building Tests
+    // ==========================================
+
+    /// Spec: GatewayConfig should be built from Gateway spec
+    #[test]
+    fn test_build_gateway_config() {
+        let gateway = Gateway {
+            metadata: kube::core::ObjectMeta {
+                name: Some("my-gateway".to_string()),
+                namespace: Some("default".to_string()),
+                ..Default::default()
+            },
+            spec: gateway_crds::GatewaySpec {
+                gateway_class_name: "multiway".to_string(),
+                listeners: vec![
+                    GatewayListeners {
+                        name: "http".to_string(),
+                        port: 80,
+                        protocol: "HTTP".to_string(),
+                        hostname: Some("example.com".to_string()),
+                        allowed_routes: None,
+                        tls: None,
+                    },
+                    GatewayListeners {
+                        name: "http-alt".to_string(),
+                        port: 8080,
+                        protocol: "HTTP".to_string(),
+                        hostname: None,
+                        allowed_routes: None,
+                        tls: None,
+                    },
+                ],
+                addresses: None,
+                infrastructure: None,
+            },
+            status: None,
+        };
+
+        let config = build_gateway_config(&gateway, "default");
+
+        assert_eq!(config.gateway.name, "my-gateway");
+        assert_eq!(config.gateway.namespace, "default");
+        assert_eq!(config.listeners.len(), 2);
+
+        // Check first listener
+        assert_eq!(config.listeners[0].name, "http");
+        assert_eq!(config.listeners[0].port, 80);
+        assert_eq!(config.listeners[0].protocol, Protocol::Http);
+        assert_eq!(
+            config.listeners[0].hostname,
+            Some("example.com".to_string())
+        );
+
+        // Check second listener
+        assert_eq!(config.listeners[1].name, "http-alt");
+        assert_eq!(config.listeners[1].port, 8080);
+        assert_eq!(config.listeners[1].hostname, None);
     }
 }
