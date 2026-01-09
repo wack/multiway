@@ -67,12 +67,14 @@ jobs:
           IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.component }}"
           SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
 
-          # Architecture-specific tag
+          # Architecture-specific tag (always set)
           echo "arch_tag=${IMAGE}:${SHA_SHORT}-${{ matrix.arch }}" >> $GITHUB_OUTPUT
 
-          # For branch builds, also tag with branch-arch
-          if [[ "${{ github.ref_type }}" == "branch" ]]; then
-            BRANCH="${{ github.ref_name }}"
+          # For non-PR builds, also tag with branch-arch
+          # PRs have ref_name like "5/merge" which contains invalid chars for Docker tags
+          if [[ "${{ github.event_name }}" != "pull_request" ]]; then
+            # Sanitize branch name: replace / with - for valid Docker tags
+            BRANCH=$(echo "${{ github.ref_name }}" | sed 's/\//-/g')
             echo "branch_tag=${IMAGE}:${BRANCH}-${{ matrix.arch }}" >> $GITHUB_OUTPUT
           fi
 
@@ -83,9 +85,7 @@ jobs:
           file: crates/${{ matrix.component }}/Dockerfile
           platforms: ${{ matrix.platform }}
           push: ${{ github.event_name != 'pull_request' }}
-          tags: |
-            ${{ steps.tags.outputs.arch_tag }}
-            ${{ steps.tags.outputs.branch_tag }}
+          tags: ${{ steps.tags.outputs.branch_tag && format('{0},{1}', steps.tags.outputs.arch_tag, steps.tags.outputs.branch_tag) || steps.tags.outputs.arch_tag }}
           cache-from: type=gha,scope=${{ matrix.component }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}-${{ matrix.arch }}
           provenance: false
