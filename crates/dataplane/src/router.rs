@@ -12,6 +12,21 @@ use crate::config::{
     QueryParamMatch, QueryParamMatchType, RouteConfig, RouteFilter, RouteMatch, RouteRule,
 };
 
+/// Information about an incoming HTTP request for routing
+#[derive(Debug, Clone)]
+pub struct RequestInfo<'a> {
+    /// The hostname from the Host header
+    pub host: Option<&'a str>,
+    /// The request path
+    pub path: &'a str,
+    /// The HTTP method
+    pub method: &'a str,
+    /// Request headers
+    pub headers: &'a [(String, String)],
+    /// Query parameters
+    pub query_params: &'a [(String, String)],
+}
+
 /// Result of routing a request
 #[derive(Debug, Clone)]
 pub struct RoutingResult {
@@ -89,16 +104,16 @@ impl Router {
         for (route_idx, route) in config.routes.iter().enumerate() {
             for (rule_idx, rule) in route.rules.iter().enumerate() {
                 for (match_idx, route_match) in rule.matches.iter().enumerate() {
-                    if let Some(path) = &route_match.path {
-                        if path.match_type == PathMatchType::RegularExpression {
-                            let regex = Regex::new(&path.value).ok();
-                            path_patterns.push(CompiledPattern {
-                                route_idx,
-                                rule_idx,
-                                match_idx,
-                                regex,
-                            });
-                        }
+                    if let Some(path) = &route_match.path
+                        && path.match_type == PathMatchType::RegularExpression
+                    {
+                        let regex = Regex::new(&path.value).ok();
+                        path_patterns.push(CompiledPattern {
+                            route_idx,
+                            rule_idx,
+                            match_idx,
+                            regex,
+                        });
                     }
                 }
             }
@@ -112,17 +127,13 @@ impl Router {
         &self,
         config: &GatewayConfig,
         listener_name: &str,
-        host: Option<&str>,
-        path: &str,
-        method: &str,
-        headers: &[(String, String)],
-        query_params: &[(String, String)],
+        request: RequestInfo<'_>,
     ) -> RoutingResult {
         trace!(
             listener = listener_name,
-            host = ?host,
-            path = path,
-            method = method,
+            host = ?request.host,
+            path = request.path,
+            method = request.method,
             "Routing request"
         );
 
@@ -137,15 +148,20 @@ impl Router {
             }
 
             // Check hostname match
-            if !self.matches_hostname(&route.hostnames, host) {
+            if !self.matches_hostname(&route.hostnames, request.host) {
                 continue;
             }
 
             // Check rules
             for rule in &route.rules {
-                if let Some(result) =
-                    self.try_match_rule(route, rule, path, method, headers, query_params)
-                {
+                if let Some(result) = self.try_match_rule(
+                    route,
+                    rule,
+                    request.path,
+                    request.method,
+                    request.headers,
+                    request.query_params,
+                ) {
                     return result;
                 }
             }
@@ -220,17 +236,17 @@ impl Router {
         query_params: &[(String, String)],
     ) -> bool {
         // Check path match
-        if let Some(path_match) = &route_match.path {
-            if !self.matches_path(path_match, path) {
-                return false;
-            }
+        if let Some(path_match) = &route_match.path
+            && !self.matches_path(path_match, path)
+        {
+            return false;
         }
 
         // Check method match
-        if let Some(expected_method) = &route_match.method {
-            if !method.eq_ignore_ascii_case(expected_method) {
-                return false;
-            }
+        if let Some(expected_method) = &route_match.method
+            && !method.eq_ignore_ascii_case(expected_method)
+        {
+            return false;
         }
 
         // Check header matches (AND semantics)
@@ -281,10 +297,10 @@ impl Router {
                         }
                     }
                     HeaderMatchType::RegularExpression => {
-                        if let Ok(regex) = Regex::new(&header_match.value) {
-                            if regex.is_match(value) {
-                                return true;
-                            }
+                        if let Ok(regex) = Regex::new(&header_match.value)
+                            && regex.is_match(value)
+                        {
+                            return true;
                         }
                     }
                 }
@@ -307,10 +323,10 @@ impl Router {
                         }
                     }
                     QueryParamMatchType::RegularExpression => {
-                        if let Ok(regex) = Regex::new(&param_match.value) {
-                            if regex.is_match(value) {
-                                return true;
-                            }
+                        if let Ok(regex) = Regex::new(&param_match.value)
+                            && regex.is_match(value)
+                        {
+                            return true;
                         }
                     }
                 }
@@ -430,6 +446,45 @@ mod tests {
         QueryParamMatch, QueryParamMatchType, RouteConfig, RouteMatch, RouteRule,
     };
 
+    /// Helper trait to make test routing calls more concise
+    trait RouterTestExt {
+        fn route_test(
+            &self,
+            config: &GatewayConfig,
+            listener_name: &str,
+            host: Option<&str>,
+            path: &str,
+            method: &str,
+            headers: &[(String, String)],
+            query_params: &[(String, String)],
+        ) -> RoutingResult;
+    }
+
+    impl RouterTestExt for Router {
+        fn route_test(
+            &self,
+            config: &GatewayConfig,
+            listener_name: &str,
+            host: Option<&str>,
+            path: &str,
+            method: &str,
+            headers: &[(String, String)],
+            query_params: &[(String, String)],
+        ) -> RoutingResult {
+            self.route(
+                config,
+                listener_name,
+                RequestInfo {
+                    host,
+                    path,
+                    method,
+                    headers,
+                    query_params,
+                },
+            )
+        }
+    }
+
     fn create_test_config() -> GatewayConfig {
         GatewayConfig {
             version: "v1".to_string(),
@@ -483,7 +538,7 @@ mod tests {
         let router = Router::new(&config);
 
         // Should match
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -495,7 +550,7 @@ mod tests {
         assert!(result.route.is_some());
 
         // Should not match - wrong host
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("other.com"),
@@ -507,7 +562,7 @@ mod tests {
         assert!(result.route.is_none());
 
         // Should not match - wrong path
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -531,7 +586,7 @@ mod tests {
         let router = Router::new(&config);
 
         // Should match wildcard
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("api.example.com"),
@@ -543,7 +598,7 @@ mod tests {
         assert!(result.route.is_some());
 
         // Should not match base domain for wildcard
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -563,7 +618,7 @@ mod tests {
         let router = Router::new(&config);
 
         // Should match multi-level subdomain
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("api.v2.example.com"),
@@ -583,7 +638,7 @@ mod tests {
         let router = Router::new(&config);
 
         // Should match any host
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("anything.example.org"),
@@ -595,7 +650,7 @@ mod tests {
         assert!(result.route.is_some());
 
         // Should also match with no host
-        let result = router.route(&config, "http", None, "/api/users", "GET", &[], &[]);
+        let result = router.route_test(&config, "http", None, "/api/users", "GET", &[], &[]);
         assert!(result.route.is_some());
     }
 
@@ -606,7 +661,7 @@ mod tests {
         let router = Router::new(&config);
 
         // Should match even with port in Host header
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com:8080"),
@@ -633,7 +688,7 @@ mod tests {
         let router = Router::new(&config);
 
         // Should match any path
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -644,7 +699,7 @@ mod tests {
         );
         assert!(result.route.is_some());
 
-        let result = router.route(&config, "http", Some("example.com"), "/", "GET", &[], &[]);
+        let result = router.route_test(&config, "http", Some("example.com"), "/", "GET", &[], &[]);
         assert!(result.route.is_some());
     }
 
@@ -659,7 +714,7 @@ mod tests {
         let router = Router::new(&config);
 
         // Should match exact prefix
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -671,7 +726,7 @@ mod tests {
         assert!(result.route.is_some());
 
         // Should match prefix followed by /
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -683,7 +738,7 @@ mod tests {
         assert!(result.route.is_some());
 
         // Should NOT match /apiversion (no / boundary)
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -706,7 +761,7 @@ mod tests {
         let router = Router::new(&config);
 
         // Should match exact path
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -718,7 +773,7 @@ mod tests {
         assert!(result.route.is_some());
 
         // Should NOT match with trailing slash
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -730,7 +785,7 @@ mod tests {
         assert!(result.route.is_none());
 
         // Should NOT match sub-path
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -753,7 +808,7 @@ mod tests {
         let router = Router::new(&config);
 
         // Should match v1
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -765,7 +820,7 @@ mod tests {
         assert!(result.route.is_some());
 
         // Should match v2
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -777,7 +832,7 @@ mod tests {
         assert!(result.route.is_some());
 
         // Should NOT match vX
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -805,7 +860,7 @@ mod tests {
         let router = Router::new(&config);
 
         // Should match with exact value
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -817,7 +872,7 @@ mod tests {
         assert!(result.route.is_some());
 
         // Should match with different case header name
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -829,7 +884,7 @@ mod tests {
         assert!(result.route.is_some());
 
         // Should NOT match with wrong value
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -860,7 +915,7 @@ mod tests {
         let router = Router::new(&config);
 
         // Should match when ALL headers present
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -875,7 +930,7 @@ mod tests {
         assert!(result.route.is_some());
 
         // Should NOT match when only one header present
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -899,7 +954,7 @@ mod tests {
         let router = Router::new(&config);
 
         // Should match UUID-like pattern
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -911,7 +966,7 @@ mod tests {
         assert!(result.route.is_some());
 
         // Should NOT match non-matching pattern
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -939,7 +994,7 @@ mod tests {
         let router = Router::new(&config);
 
         // Should match exact value
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -951,7 +1006,7 @@ mod tests {
         assert!(result.route.is_some());
 
         // Should NOT match wrong value
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -975,7 +1030,7 @@ mod tests {
         let router = Router::new(&config);
 
         // Should match numeric ID
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -987,7 +1042,7 @@ mod tests {
         assert!(result.route.is_some());
 
         // Should NOT match non-numeric
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -1011,7 +1066,7 @@ mod tests {
         let router = Router::new(&config);
 
         // Should match POST
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -1023,7 +1078,7 @@ mod tests {
         assert!(result.route.is_some());
 
         // Should match lowercase post
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -1035,7 +1090,7 @@ mod tests {
         assert!(result.route.is_some());
 
         // Should NOT match GET
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -1078,7 +1133,7 @@ mod tests {
         let router = Router::new(&config);
 
         // Should match /api
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -1090,7 +1145,7 @@ mod tests {
         assert!(result.route.is_some());
 
         // Should match /admin
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -1102,7 +1157,7 @@ mod tests {
         assert!(result.route.is_some());
 
         // Should NOT match /other
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -1133,7 +1188,7 @@ mod tests {
         }];
         let router = Router::new(&config);
 
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -1168,7 +1223,7 @@ mod tests {
         }];
         let router = Router::new(&config);
 
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -1196,7 +1251,7 @@ mod tests {
         }];
         let router = Router::new(&config);
 
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -1222,7 +1277,7 @@ mod tests {
         }];
         let router = Router::new(&config);
 
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -1251,7 +1306,7 @@ mod tests {
         }];
         let router = Router::new(&config);
 
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -1288,7 +1343,7 @@ mod tests {
         let router = Router::new(&config);
 
         // Should match on http listener
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),
@@ -1300,7 +1355,7 @@ mod tests {
         assert!(result.route.is_some());
 
         // Should NOT match on https listener (not attached)
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "https",
             Some("example.com"),
@@ -1324,7 +1379,7 @@ mod tests {
         let router = Router::new(&config);
 
         // Should match any path
-        let result = router.route(
+        let result = router.route_test(
             &config,
             "http",
             Some("example.com"),

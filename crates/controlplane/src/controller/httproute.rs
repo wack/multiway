@@ -73,7 +73,7 @@ pub async fn run_httproute_controller(ctx: Arc<ControllerContext>) {
         })
         .run(
             |obj, ctx| async move { reconcile_httproute(obj, ctx).await },
-            |obj, error, ctx| error_policy(obj, error, ctx),
+            error_policy,
             ctx,
         )
         .for_each(|result| async move {
@@ -330,16 +330,16 @@ fn find_matching_listeners<'a>(
         .iter()
         .filter(|l| {
             // Match by section name if specified
-            if let Some(name) = section_name {
-                if l.name != name {
-                    return false;
-                }
+            if let Some(name) = section_name
+                && l.name != name
+            {
+                return false;
             }
             // Match by port if specified
-            if let Some(p) = port {
-                if l.port != p {
-                    return false;
-                }
+            if let Some(p) = port
+                && l.port != p
+            {
+                return false;
             }
             // Must be HTTP or HTTPS protocol
             let protocol = l.protocol.to_uppercase();
@@ -405,7 +405,7 @@ async fn validate_backend(
     let backend_group = backend.group.as_deref().unwrap_or("");
 
     // We only support Service backends
-    if backend_group != "" || backend_kind != "Service" {
+    if !backend_group.is_empty() || backend_kind != "Service" {
         return Err(ControllerError::invalid_httproute_config(format!(
             "Unsupported backend type: {}/{}",
             backend_group, backend_kind
@@ -825,18 +825,12 @@ fn convert_backend(
 
 /// Parse a duration string (e.g., "10s", "1m")
 fn parse_duration(duration: &str) -> Option<f64> {
-    if duration.ends_with('s') {
-        duration[..duration.len() - 1].parse().ok()
-    } else if duration.ends_with('m') {
-        duration[..duration.len() - 1]
-            .parse::<f64>()
-            .ok()
-            .map(|m| m * 60.0)
-    } else if duration.ends_with('h') {
-        duration[..duration.len() - 1]
-            .parse::<f64>()
-            .ok()
-            .map(|h| h * 3600.0)
+    if let Some(s) = duration.strip_suffix('s') {
+        s.parse().ok()
+    } else if let Some(m) = duration.strip_suffix('m') {
+        m.parse::<f64>().ok().map(|m| m * 60.0)
+    } else if let Some(h) = duration.strip_suffix('h') {
+        h.parse::<f64>().ok().map(|h| h * 3600.0)
     } else {
         duration.parse().ok()
     }

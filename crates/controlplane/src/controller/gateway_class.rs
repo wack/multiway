@@ -58,7 +58,7 @@ pub async fn run_gateway_class_controller(ctx: Arc<ControllerContext>) {
         .shutdown_on_signal()
         .run(
             |obj, ctx| async move { reconcile_gateway_class(obj, ctx).await },
-            |obj, error, ctx| error_policy(obj, error, ctx),
+            error_policy,
             ctx,
         )
         .for_each(|result| async move {
