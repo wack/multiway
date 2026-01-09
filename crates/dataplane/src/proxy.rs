@@ -177,11 +177,13 @@ impl ProxyHttp for GatewayProxyService {
         let result = router.route(
             &config,
             &self.listener_name,
-            host,
-            path,
-            method,
-            &headers,
-            &query_params,
+            crate::router::RequestInfo {
+                host,
+                path,
+                method,
+                headers: &headers,
+                query_params: &query_params,
+            },
         );
 
         debug!(
@@ -469,11 +471,11 @@ impl ProxyHttp for GatewayProxyService {
 /// Simple random number generator for load balancing
 fn rand_value() -> u32 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now()
+
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
-        .unwrap_or(0);
-    nanos
+        .unwrap_or(0)
 }
 
 #[cfg(test)]

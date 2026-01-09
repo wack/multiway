@@ -37,10 +37,9 @@ use tokio::time::Duration;
 use tracing::{debug, error, info, instrument, warn};
 
 use super::config::{
-    BackendRef, CONFIG_KEY, CONTROLLER_NAME, DataPlaneNames, GatewayConfig,
-    HeaderMatch, HeaderMatchType, HeaderValue, PathMatch, PathMatchType, PathModifier,
-    QueryParamMatch, QueryParamMatchType, RouteConfig, RouteFilter, RouteMatch, RouteRule,
-    TimeoutConfig,
+    BackendRef, CONFIG_KEY, CONTROLLER_NAME, DataPlaneNames, GatewayConfig, HeaderMatch,
+    HeaderMatchType, HeaderValue, PathMatch, PathMatchType, PathModifier, QueryParamMatch,
+    QueryParamMatchType, RouteConfig, RouteFilter, RouteMatch, RouteRule, TimeoutConfig,
 };
 use super::context::ControllerContext;
 use super::error::{ControllerError, Result};
@@ -74,7 +73,7 @@ pub async fn run_httproute_controller(ctx: Arc<ControllerContext>) {
         })
         .run(
             |obj, ctx| async move { reconcile_httproute(obj, ctx).await },
-            |obj, error, ctx| error_policy(obj, error, ctx),
+            error_policy,
             ctx,
         )
         .for_each(|result| async move {
@@ -331,16 +330,16 @@ fn find_matching_listeners<'a>(
         .iter()
         .filter(|l| {
             // Match by section name if specified
-            if let Some(name) = section_name {
-                if l.name != name {
-                    return false;
-                }
+            if let Some(name) = section_name
+                && l.name != name
+            {
+                return false;
             }
             // Match by port if specified
-            if let Some(p) = port {
-                if l.port != p {
-                    return false;
-                }
+            if let Some(p) = port
+                && l.port != p
+            {
+                return false;
             }
             // Must be HTTP or HTTPS protocol
             let protocol = l.protocol.to_uppercase();
@@ -406,7 +405,7 @@ async fn validate_backend(
     let backend_group = backend.group.as_deref().unwrap_or("");
 
     // We only support Service backends
-    if backend_group != "" || backend_kind != "Service" {
+    if !backend_group.is_empty() || backend_kind != "Service" {
         return Err(ControllerError::invalid_httproute_config(format!(
             "Unsupported backend type: {}/{}",
             backend_group, backend_kind
@@ -826,18 +825,12 @@ fn convert_backend(
 
 /// Parse a duration string (e.g., "10s", "1m")
 fn parse_duration(duration: &str) -> Option<f64> {
-    if duration.ends_with('s') {
-        duration[..duration.len() - 1].parse().ok()
-    } else if duration.ends_with('m') {
-        duration[..duration.len() - 1]
-            .parse::<f64>()
-            .ok()
-            .map(|m| m * 60.0)
-    } else if duration.ends_with('h') {
-        duration[..duration.len() - 1]
-            .parse::<f64>()
-            .ok()
-            .map(|h| h * 3600.0)
+    if let Some(s) = duration.strip_suffix('s') {
+        s.parse().ok()
+    } else if let Some(m) = duration.strip_suffix('m') {
+        m.parse::<f64>().ok().map(|m| m * 60.0)
+    } else if let Some(h) = duration.strip_suffix('h') {
+        h.parse::<f64>().ok().map(|h| h * 3600.0)
     } else {
         duration.parse().ok()
     }
@@ -921,11 +914,11 @@ mod tests {
     use super::*;
     use gateway_crds::{
         HttpRouteRulesFiltersRequestHeaderModifier, HttpRouteRulesFiltersRequestRedirect,
-        HttpRouteRulesFiltersRequestRedirectPath,
-        HttpRouteRulesFiltersRequestRedirectPathType, HttpRouteRulesFiltersRequestRedirectScheme,
-        HttpRouteRulesFiltersUrlRewrite, HttpRouteRulesFiltersUrlRewritePath,
-        HttpRouteRulesFiltersUrlRewritePathType, HttpRouteRulesMatchesHeaders,
-        HttpRouteRulesMatchesPath, HttpRouteRulesMatchesQueryParams, HttpRouteRulesTimeouts,
+        HttpRouteRulesFiltersRequestRedirectPath, HttpRouteRulesFiltersRequestRedirectPathType,
+        HttpRouteRulesFiltersRequestRedirectScheme, HttpRouteRulesFiltersUrlRewrite,
+        HttpRouteRulesFiltersUrlRewritePath, HttpRouteRulesFiltersUrlRewritePathType,
+        HttpRouteRulesMatchesHeaders, HttpRouteRulesMatchesPath, HttpRouteRulesMatchesQueryParams,
+        HttpRouteRulesTimeouts,
     };
 
     // ==========================================
@@ -967,11 +960,20 @@ mod tests {
         assert_eq!(convert_method(&HttpRouteRulesMatchesMethod::Get), "GET");
         assert_eq!(convert_method(&HttpRouteRulesMatchesMethod::Post), "POST");
         assert_eq!(convert_method(&HttpRouteRulesMatchesMethod::Put), "PUT");
-        assert_eq!(convert_method(&HttpRouteRulesMatchesMethod::Delete), "DELETE");
+        assert_eq!(
+            convert_method(&HttpRouteRulesMatchesMethod::Delete),
+            "DELETE"
+        );
         assert_eq!(convert_method(&HttpRouteRulesMatchesMethod::Patch), "PATCH");
         assert_eq!(convert_method(&HttpRouteRulesMatchesMethod::Head), "HEAD");
-        assert_eq!(convert_method(&HttpRouteRulesMatchesMethod::Options), "OPTIONS");
-        assert_eq!(convert_method(&HttpRouteRulesMatchesMethod::Connect), "CONNECT");
+        assert_eq!(
+            convert_method(&HttpRouteRulesMatchesMethod::Options),
+            "OPTIONS"
+        );
+        assert_eq!(
+            convert_method(&HttpRouteRulesMatchesMethod::Connect),
+            "CONNECT"
+        );
         assert_eq!(convert_method(&HttpRouteRulesMatchesMethod::Trace), "TRACE");
     }
 
@@ -1001,7 +1003,9 @@ mod tests {
         let mut labels = BTreeMap::new();
         labels.insert("env".to_string(), "prod".to_string());
         assert!(is_namespace_allowed(
-            &AllowedNamespaces::Selector { match_labels: labels },
+            &AllowedNamespaces::Selector {
+                match_labels: labels
+            },
             "some-namespace" // selector is permissive if labels exist
         ));
     }
@@ -1150,14 +1154,18 @@ mod tests {
         let filter = HttpRouteRulesFilters {
             r#type: HttpRouteRulesFiltersType::RequestHeaderModifier,
             request_header_modifier: Some(HttpRouteRulesFiltersRequestHeaderModifier {
-                add: Some(vec![gateway_crds::HttpRouteRulesFiltersRequestHeaderModifierAdd {
-                    name: "X-Added".to_string(),
-                    value: "added-value".to_string(),
-                }]),
-                set: Some(vec![gateway_crds::HttpRouteRulesFiltersRequestHeaderModifierSet {
-                    name: "X-Set".to_string(),
-                    value: "set-value".to_string(),
-                }]),
+                add: Some(vec![
+                    gateway_crds::HttpRouteRulesFiltersRequestHeaderModifierAdd {
+                        name: "X-Added".to_string(),
+                        value: "added-value".to_string(),
+                    },
+                ]),
+                set: Some(vec![
+                    gateway_crds::HttpRouteRulesFiltersRequestHeaderModifierSet {
+                        name: "X-Set".to_string(),
+                        value: "set-value".to_string(),
+                    },
+                ]),
                 remove: Some(vec!["X-Remove".to_string()]),
             }),
             response_header_modifier: None,
@@ -1217,7 +1225,9 @@ mod tests {
                 assert_eq!(scheme, Some("https".to_string()));
                 assert_eq!(hostname, Some("new-host.example.com".to_string()));
                 assert_eq!(port, Some(8443));
-                assert!(matches!(path, Some(PathModifier::ReplaceFullPath { value }) if value == "/new-path"));
+                assert!(
+                    matches!(path, Some(PathModifier::ReplaceFullPath { value }) if value == "/new-path")
+                );
                 assert_eq!(status_code, Some(301));
             }
             _ => panic!("Expected RequestRedirect filter"),
@@ -1248,7 +1258,9 @@ mod tests {
         match result {
             RouteFilter::URLRewrite { hostname, path } => {
                 assert_eq!(hostname, Some("backend.internal".to_string()));
-                assert!(matches!(path, Some(PathModifier::ReplacePrefixMatch { value }) if value == "/internal-api"));
+                assert!(
+                    matches!(path, Some(PathModifier::ReplacePrefixMatch { value }) if value == "/internal-api")
+                );
             }
             _ => panic!("Expected URLRewrite filter"),
         }
@@ -1389,20 +1401,16 @@ mod tests {
                 r#type: Some(HttpRouteRulesMatchesPathType::PathPrefix),
                 value: Some("/api/v1".to_string()),
             }),
-            headers: Some(vec![
-                HttpRouteRulesMatchesHeaders {
-                    r#type: Some(HttpRouteRulesMatchesHeadersType::Exact),
-                    name: "X-API-Key".to_string(),
-                    value: "secret".to_string(),
-                },
-            ]),
-            query_params: Some(vec![
-                HttpRouteRulesMatchesQueryParams {
-                    r#type: Some(HttpRouteRulesMatchesQueryParamsType::Exact),
-                    name: "format".to_string(),
-                    value: "json".to_string(),
-                },
-            ]),
+            headers: Some(vec![HttpRouteRulesMatchesHeaders {
+                r#type: Some(HttpRouteRulesMatchesHeadersType::Exact),
+                name: "X-API-Key".to_string(),
+                value: "secret".to_string(),
+            }]),
+            query_params: Some(vec![HttpRouteRulesMatchesQueryParams {
+                r#type: Some(HttpRouteRulesMatchesQueryParamsType::Exact),
+                name: "format".to_string(),
+                value: "json".to_string(),
+            }]),
             method: Some(HttpRouteRulesMatchesMethod::Post),
         };
 

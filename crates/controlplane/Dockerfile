@@ -1,10 +1,9 @@
-# Dockerfile for Multiway Data Plane
+# Dockerfile for Multiway Gateway Controller (Control Plane)
 #
 # Alpine-based build with static musl linking and distroless runtime.
-# Each Gateway resource gets its own data plane deployment.
 #
 # Build from workspace root:
-#   docker build -t multiway-dataplane:latest -f crates/dataplane/Dockerfile .
+#   docker build -t multiway:latest -f crates/controlplane/Dockerfile .
 
 ARG RUST_VERSION=1.92
 
@@ -13,17 +12,13 @@ FROM rust:${RUST_VERSION}-alpine AS builder
 
 ARG TARGETARCH
 
-# Install build dependencies (Pingora needs clang for C dependencies, g++ for libz-ng)
+# Install build dependencies (aws-lc-rs needs cmake, perl, make)
 RUN apk add --no-cache \
     musl-dev \
     pkgconfig \
     cmake \
     perl \
-    make \
-    clang \
-    clang-dev \
-    linux-headers \
-    g++
+    make
 
 # Add appropriate musl target based on architecture
 RUN case "${TARGETARCH}" in \
@@ -46,36 +41,23 @@ RUN mkdir -p crates/controlplane/src/bin crates/dataplane/src crates/gateway-crd
     echo "" > crates/controlplane/src/lib.rs && \
     echo "fn main() {}" > crates/dataplane/src/main.rs && \
     echo "" > crates/gateway-crds/src/lib.rs && \
-    cargo build --release --target $(cat /rust-target.txt) -p multiway-dataplane && \
+    cargo build --release --target $(cat /rust-target.txt) -p multiway && \
     rm -rf crates
 
 # Copy actual source code
 COPY . .
 
-# Build the real binary (touch to invalidate cache)
-# Also touch gateway-crds since dataplane may depend on it
-RUN touch crates/dataplane/src/main.rs crates/gateway-crds/src/lib.rs && \
-    cargo build --release --target $(cat /rust-target.txt) -p multiway-dataplane
+# Build the real binary (touch to invalidate cache for lib, bin, and dependencies)
+RUN touch crates/controlplane/src/lib.rs crates/controlplane/src/bin/main.rs crates/gateway-crds/src/lib.rs && \
+    cargo build --release --target $(cat /rust-target.txt) -p multiway --bin multiway
 
 # Copy binary to predictable location
-RUN cp /build/target/$(cat /rust-target.txt)/release/multiway-dataplane /multiway-dataplane
-
-# Create config directory structure in builder (distroless can't mkdir)
-RUN mkdir -p /etc/multiway
+RUN cp /build/target/$(cat /rust-target.txt)/release/multiway /multiway
 
 # Runtime stage
 FROM gcr.io/distroless/static:nonroot
 
-# Copy the binary
-COPY --from=builder /multiway-dataplane /usr/local/bin/multiway-dataplane
+COPY --from=builder /multiway /usr/local/bin/multiway
 
-# Copy config directory (owned by nonroot user in distroless)
-COPY --from=builder --chown=nonroot:nonroot /etc/multiway /etc/multiway
-
-# Default config path
-ENV CONFIG_PATH=/etc/multiway/config.json
-
-EXPOSE 8080
-
-ENTRYPOINT ["/usr/local/bin/multiway-dataplane"]
-CMD ["--config", "/etc/multiway/config.json"]
+ENTRYPOINT ["/usr/local/bin/multiway"]
+CMD ["controller", "--help"]

@@ -63,10 +63,12 @@ args = [
 
 [tasks.help]
 command = "cargo"
-description = "List help text for wack executable"
+description = "List help text for multiway executable"
 category = "Development"
 args = [
   "run",
+  "-p",
+  "multiway",
   "@@remove-empty(CARGO_MAKE_CARGO_VERBOSE_FLAGS)",
   "@@split(CARGO_MAKE_CARGO_BUILD_TEST_FLAGS, )",
   "--",

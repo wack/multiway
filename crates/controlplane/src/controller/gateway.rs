@@ -47,6 +47,16 @@ use super::context::ControllerContext;
 use super::error::{ControllerError, Result};
 use super::gateway_class::get_accepted_gateway_class;
 
+/// Parameters for updating Gateway status
+struct GatewayStatusParams<'a> {
+    generation: Option<i64>,
+    listeners: &'a [GatewayListeners],
+    accepted: bool,
+    reason: &'a str,
+    message: &'a str,
+    addresses: Option<Vec<GatewayStatusAddresses>>,
+}
+
 /// Run the Gateway controller
 pub async fn run_gateway_controller(ctx: Arc<ControllerContext>) {
     info!("Starting Gateway controller");
@@ -81,7 +91,7 @@ pub async fn run_gateway_controller(ctx: Arc<ControllerContext>) {
         )
         .run(
             |obj, ctx| async move { reconcile_gateway(obj, ctx).await },
-            |obj, error, ctx| error_policy(obj, error, ctx),
+            error_policy,
             ctx,
         )
         .for_each(|result| async move {
@@ -127,12 +137,14 @@ async fn reconcile_gateway(gateway: Arc<Gateway>, ctx: Arc<ControllerContext>) -
                     &ctx.client,
                     &namespace,
                     &name,
-                    gateway.metadata.generation,
-                    &gateway.spec.listeners,
-                    false,
-                    "Invalid",
-                    "GatewayClass not found or not accepted by this controller",
-                    None,
+                    GatewayStatusParams {
+                        generation: gateway.metadata.generation,
+                        listeners: &gateway.spec.listeners,
+                        accepted: false,
+                        reason: "Invalid",
+                        message: "GatewayClass not found or not accepted by this controller",
+                        addresses: None,
+                    },
                 )
                 .await?;
                 return Ok(Action::requeue(Duration::from_secs(30)));
@@ -150,12 +162,14 @@ async fn reconcile_gateway(gateway: Arc<Gateway>, ctx: Arc<ControllerContext>) -
             &ctx.client,
             &namespace,
             &name,
-            gateway.metadata.generation,
-            &gateway.spec.listeners,
-            false,
-            "ListenersNotValid",
-            "One or more listeners have invalid configuration",
-            None,
+            GatewayStatusParams {
+                generation: gateway.metadata.generation,
+                listeners: &gateway.spec.listeners,
+                accepted: false,
+                reason: "ListenersNotValid",
+                message: "One or more listeners have invalid configuration",
+                addresses: None,
+            },
         )
         .await?;
         return Ok(Action::requeue(Duration::from_secs(30)));
@@ -186,12 +200,14 @@ async fn reconcile_gateway(gateway: Arc<Gateway>, ctx: Arc<ControllerContext>) -
         &ctx.client,
         &namespace,
         &name,
-        gateway.metadata.generation,
-        &gateway.spec.listeners,
-        true,
-        "Accepted",
-        "Gateway is accepted and data plane is provisioned",
-        addresses,
+        GatewayStatusParams {
+            generation: gateway.metadata.generation,
+            listeners: &gateway.spec.listeners,
+            accepted: true,
+            reason: "Accepted",
+            message: "Gateway is accepted and data plane is provisioned",
+            addresses,
+        },
     )
     .await?;
 
@@ -271,7 +287,7 @@ fn build_gateway_config(gateway: &Gateway, namespace: &str) -> GatewayConfig {
     let mut config = GatewayConfig::new(namespace, gateway.name_any());
 
     for listener in &gateway.spec.listeners {
-        let protocol = Protocol::from_str(&listener.protocol).unwrap_or(Protocol::Http);
+        let protocol = listener.protocol.parse().unwrap_or(Protocol::Http);
         let listener_config = ListenerConfig {
             name: listener.name.clone(),
             port: listener.port as u16,
@@ -551,44 +567,45 @@ async fn update_gateway_status(
     client: &Client,
     namespace: &str,
     name: &str,
-    generation: Option<i64>,
-    listeners: &[GatewayListeners],
-    accepted: bool,
-    reason: &str,
-    message: &str,
-    addresses: Option<Vec<GatewayStatusAddresses>>,
+    params: GatewayStatusParams<'_>,
 ) -> Result<()> {
     let api: Api<Gateway> = Api::namespaced(client.clone(), namespace);
 
     let now = Time(Utc::now());
-    let status_value = if accepted { "True" } else { "False" };
+    let status_value = if params.accepted { "True" } else { "False" };
 
     // Build conditions
     let conditions = vec![
         Condition {
             type_: "Accepted".to_string(),
             status: status_value.to_string(),
-            observed_generation: generation,
+            observed_generation: params.generation,
             last_transition_time: now.clone(),
-            reason: reason.to_string(),
-            message: message.to_string(),
+            reason: params.reason.to_string(),
+            message: params.message.to_string(),
         },
         Condition {
             type_: "Programmed".to_string(),
             status: status_value.to_string(),
-            observed_generation: generation,
+            observed_generation: params.generation,
             last_transition_time: now.clone(),
-            reason: if accepted { "Programmed" } else { "Invalid" }.to_string(),
-            message: if accepted {
+            reason: if params.accepted {
+                "Programmed"
+            } else {
+                "Invalid"
+            }
+            .to_string(),
+            message: if params.accepted {
                 "Data plane is programmed".to_string()
             } else {
-                message.to_string()
+                params.message.to_string()
             },
         },
     ];
 
     // Build listener statuses
-    let listener_statuses: Vec<GatewayStatusListeners> = listeners
+    let listener_statuses: Vec<GatewayStatusListeners> = params
+        .listeners
         .iter()
         .map(|l| {
             let supported_kinds = match l.protocol.to_uppercase().as_str() {
@@ -606,17 +623,17 @@ async fn update_gateway_status(
                 conditions: vec![Condition {
                     type_: "Accepted".to_string(),
                     status: status_value.to_string(),
-                    observed_generation: generation,
+                    observed_generation: params.generation,
                     last_transition_time: now.clone(),
-                    reason: reason.to_string(),
-                    message: message.to_string(),
+                    reason: params.reason.to_string(),
+                    message: params.message.to_string(),
                 }],
             }
         })
         .collect();
 
     let status = GatewayStatus {
-        addresses,
+        addresses: params.addresses,
         conditions: Some(conditions),
         listeners: Some(listener_statuses),
     };

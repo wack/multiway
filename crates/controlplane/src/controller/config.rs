@@ -155,13 +155,14 @@ pub enum Protocol {
     Https,
 }
 
-impl Protocol {
-    /// Parse protocol from string
-    pub fn from_str(s: &str) -> Option<Self> {
+impl std::str::FromStr for Protocol {
+    type Err = ();
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.to_uppercase().as_str() {
-            "HTTP" => Some(Protocol::Http),
-            "HTTPS" => Some(Protocol::Https),
-            _ => None,
+            "HTTP" => Ok(Protocol::Http),
+            "HTTPS" => Ok(Protocol::Https),
+            _ => Err(()),
         }
     }
 }

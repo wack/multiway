@@ -3,6 +3,10 @@
 //! This module provides comprehensive error handling using `thiserror` for
 //! structured error types and `miette` for user-friendly error reports.
 
+// The unused_assignments warning is a false positive: thiserror uses struct fields
+// in the Display implementation via format strings like `#[error("... {name} ...")]`
+#![allow(unused_assignments)]
+
 use miette::Diagnostic;
 use thiserror::Error;
 
