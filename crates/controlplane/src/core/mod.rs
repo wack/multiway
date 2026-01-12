@@ -26,13 +26,14 @@
 
 pub mod result;
 pub mod snapshot;
+pub mod validate;
 
 mod reconcile;
-mod validate;
 
 pub use reconcile::{reconcile_gateway, reconcile_gateway_class, reconcile_httproute};
 pub use result::{ReconcileResult, RequeueDecision, ResourceUpsert, StatusUpdate};
 pub use snapshot::{WorldSnapshot, WorldSnapshotBuilder};
 pub use validate::{
-    ListenerValidation, ListenerValidationResult, validate_gateway_class, validate_listeners,
+    AllowedNamespaces, ListenerValidation, ListenerValidationResult, find_matching_listeners,
+    get_allowed_route_namespaces, is_namespace_allowed, validate_gateway_class, validate_listeners,
 };
