@@ -506,7 +506,7 @@ async fn update_gateway_configmap(
 }
 
 /// Convert an HTTPRoute to our internal RouteConfig format
-fn convert_httproute_to_config(
+pub fn convert_httproute_to_config(
     httproute: &HTTPRoute,
     attached_listeners: &[&str],
 ) -> Result<RouteConfig> {
