@@ -35,6 +35,23 @@ jobs:
     - name: "Setup Rust"
       uses: "wack/gh-actions/setup-rust@trunk"
 
+    # We tend to use stable Rust to build MultiWay.
+    - name: "Install Rust (Stable)"
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: "rustfmt,clippy"
+    
+    # Restore the cache.
+    - name: "Restore Rust Cache"
+      uses: "Swatinem/rust-cache@v2"
+       
+    # Installing from binaries tends to be faster than installing
+    # with Cargo from source.
+    - name: "Install Cargo Tools from Binaries."
+      uses: "taiki-e/install-action@v2"
+      with:
+        tool: "cargo-make,cargo-nextest,kopium"
+
     - name: Install kopium
       run: which kopium || cargo install kopium
   
