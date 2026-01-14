@@ -32,8 +32,9 @@ jobs:
     name: Validate Rust Build
     runs-on: ubuntu-24.04
     steps:
-    - name: "Setup Rust"
-      uses: "wack/gh-actions/setup-rust@trunk"
+
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
     # We tend to use stable Rust to build MultiWay.
     - name: "Install Rust (Stable)"
@@ -52,9 +53,6 @@ jobs:
       with:
         tool: "cargo-make,cargo-nextest,kopium"
 
-    - name: Install kopium
-      run: which kopium || cargo install kopium
-  
     - name: Cache cargo tools
       uses: actions/cache@v4
       with:
