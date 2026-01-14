@@ -218,14 +218,15 @@ kubectl apply --server-side -f .crds/v${GATEWAY_API_VERSION}/
 [tasks.gen-crds]
 description = "Generate CRDS from YAML"
 category = "Development"
-script_runner = "@shell"
+script_runner = "bash"
 script = '''
-kopium --filename .crds/v${GATEWAY_API_VERSION}/backend-tls-policies.yml > crates/gateway-crds/src/backend_tls_policies.rs
-kopium --filename .crds/v${GATEWAY_API_VERSION}/gateway.yml > crates/gateway-crds/src/gateway.rs
-kopium --filename .crds/v${GATEWAY_API_VERSION}/gateway-class.yml > crates/gateway-crds/src/gateway_class.rs
-kopium --filename .crds/v${GATEWAY_API_VERSION}/grpc.yml > crates/gateway-crds/src/grpc.rs
-kopium --filename .crds/v${GATEWAY_API_VERSION}/http.yml > crates/gateway-crds/src/http.rs
-kopium --filename .crds/v${GATEWAY_API_VERSION}/reference-grants.yml > crates/gateway-crds/src/reference_grants.rs
+gen_crd() { kopium --filename .crds/v${GATEWAY_API_VERSION}/${1}.yml | rustfmt > crates/gateway-crds/src/${1//-/_}.rs; }
+gen_crd backend-tls-policies
+gen_crd gateway
+gen_crd gateway-class
+gen_crd grpc
+gen_crd http
+gen_crd reference-grants
 '''
 
 # Conformance Test Tasks
