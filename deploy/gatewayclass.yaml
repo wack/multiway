@@ -6,6 +6,4 @@ metadata:
     app.kubernetes.io/name: multiway
 spec:
   controllerName: io.multiway/gateway-controller
-  description: |
-    Multiway is a Gateway API implementation using Pingora as the data plane.
-    Each Gateway resource gets its own dedicated proxy deployment.
+  description: Gateway API implementation using Pingora data plane
