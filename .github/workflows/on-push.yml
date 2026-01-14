@@ -57,7 +57,7 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ~/.cargo/bin
-        key: ${{ matrix.runner }}-cargo-tools-kopium-cargo-make
+        key: ${{ runner.os }}-cargo-tools-kopium-cargo-make
 
     - name: Generate Gateway API CRDs
       run: cargo make gen-crds
