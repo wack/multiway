@@ -1,34 +1,49 @@
-name: Build Docker Images
+name: "On Merge | Validate Build"
 
 on:
-  push:
-    branches:
-      - trunk
-    paths:
-      - 'crates/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - '.github/workflows/docker-build.yml'
-  pull_request:
-    paths:
-      - 'crates/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - '.github/workflows/docker-build.yml'
+  # Use a merge queue to gate the creation and storage
+  # of these Docker images.
+  merge_group:
+  # Allow this job to be executed manually from the GH UI.
   workflow_dispatch:
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 env:
+  CARGO_TERM_COLOR: always
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository }}
 
 jobs:
+  pr-ready:
+    if: always()
+    name: "⚡ PR Ready"
+    runs-on: ubuntu-22.04
+    needs:
+    - "build"
+    - "docker"
+    - "manifest"
+    steps:
+      - if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')  || contains(needs.*.result, 'skipped') }}
+        run: |
+          echo "One or more dependent jobs failed, was skipped, or was cancelled. All jobs must pass for the PR to be ready."
+          exit 1
+      - run: echo "OK"
+
+  # This job installs Cargo Make and Cargo Nextest before running
+  # the CI workflow using Cargo Make. Most of the time, it should
+  # restore Cargo Make and other dependencies from cache.
   build:
+    name: Validate Rust Build
+    uses: "wack/gh-actions/.github/workflows/validate.yml@trunk"
+    permissions:
+      id-token: "write"
+      contents: "read"
+      attestations: "write"
+
+  docker:
     name: Build ${{ matrix.component }} (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
+    needs:
+      - "build"
     permissions:
       contents: read
       packages: write
@@ -75,7 +90,6 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to Container Registry
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -91,10 +105,12 @@ jobs:
           # Architecture-specific tag (always set)
           echo "arch_tag=${IMAGE}:${SHA_SHORT}-${{ matrix.arch }}" >> $GITHUB_OUTPUT
 
-          # For non-PR builds, also tag with branch-arch
-          # PRs have ref_name like "5/merge" which contains invalid chars for Docker tags
-          if [[ "${{ github.event_name }}" != "pull_request" ]]; then
-            # Sanitize branch name: replace / with - for valid Docker tags
+          # For merge queue, use the head SHA for branch tagging
+          # Sanitize branch name: replace / with - for valid Docker tags
+          if [[ "${{ github.event_name }}" == "merge_group" ]]; then
+            BRANCH=$(echo "${{ github.base_ref }}" | sed 's/\//-/g')
+            echo "branch_tag=${IMAGE}:${BRANCH}-${{ matrix.arch }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             BRANCH=$(echo "${{ github.ref_name }}" | sed 's/\//-/g')
             echo "branch_tag=${IMAGE}:${BRANCH}-${{ matrix.arch }}" >> $GITHUB_OUTPUT
           fi
@@ -105,7 +121,7 @@ jobs:
           context: .
           file: crates/${{ matrix.component }}/Dockerfile
           platforms: ${{ matrix.platform }}
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.tags.outputs.branch_tag && format('{0},{1}', steps.tags.outputs.arch_tag, steps.tags.outputs.branch_tag) || steps.tags.outputs.arch_tag }}
           cache-from: type=gha,scope=${{ matrix.component }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}-${{ matrix.arch }}
@@ -115,8 +131,7 @@ jobs:
   manifest:
     name: Create manifest (${{ matrix.component }})
     runs-on: ubuntu-latest
-    needs: build
-    if: github.event_name != 'pull_request'
+    needs: docker
     permissions:
       contents: read
       packages: write
@@ -142,7 +157,6 @@ jobs:
         run: |
           IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.component }}"
           SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
-          BRANCH="${{ github.ref_name }}"
 
           # Create manifest for SHA tag
           docker buildx imagetools create -t "${IMAGE}:${SHA_SHORT}" \
@@ -150,12 +164,20 @@ jobs:
             "${IMAGE}:${SHA_SHORT}-arm64"
 
           # Create manifest for branch tag
-          docker buildx imagetools create -t "${IMAGE}:${BRANCH}" \
-            "${IMAGE}:${BRANCH}-amd64" \
-            "${IMAGE}:${BRANCH}-arm64"
+          if [[ "${{ github.event_name }}" == "merge_group" ]]; then
+            BRANCH="${{ github.base_ref }}"
+            docker buildx imagetools create -t "${IMAGE}:${BRANCH}" \
+              "${IMAGE}:${BRANCH}-amd64" \
+              "${IMAGE}:${BRANCH}-arm64"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            BRANCH="${{ github.ref_name }}"
+            docker buildx imagetools create -t "${IMAGE}:${BRANCH}" \
+              "${IMAGE}:${BRANCH}-amd64" \
+              "${IMAGE}:${BRANCH}-arm64"
+          fi
 
           # Create 'latest' tag for trunk branch
-          if [[ "${BRANCH}" == "trunk" ]]; then
+          if [[ "${{ github.base_ref }}" == "trunk" ]] || [[ "${{ github.ref_name }}" == "trunk" ]]; then
             docker buildx imagetools create -t "${IMAGE}:latest" \
               "${IMAGE}:${SHA_SHORT}-amd64" \
               "${IMAGE}:${SHA_SHORT}-arm64"
