@@ -18,10 +18,10 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use gateway_crds::{
-    Gateway, HTTPRoute, HttpRouteRules, HttpRouteRulesBackendRefs,
-    HttpRouteRulesFilters, HttpRouteRulesFiltersType, HttpRouteRulesMatches,
-    HttpRouteRulesMatchesHeaders, HttpRouteRulesMatchesHeadersType, HttpRouteRulesMatchesMethod,
-    HttpRouteRulesMatchesPath, HttpRouteRulesMatchesPathType, HttpRouteRulesMatchesQueryParams,
+    Gateway, HTTPRoute, HttpRouteRules, HttpRouteRulesBackendRefs, HttpRouteRulesFilters,
+    HttpRouteRulesFiltersType, HttpRouteRulesMatches, HttpRouteRulesMatchesHeaders,
+    HttpRouteRulesMatchesHeadersType, HttpRouteRulesMatchesMethod, HttpRouteRulesMatchesPath,
+    HttpRouteRulesMatchesPathType, HttpRouteRulesMatchesQueryParams,
     HttpRouteRulesMatchesQueryParamsType,
 };
 use k8s_openapi::api::core::v1::Service;
@@ -114,7 +114,6 @@ async fn reconcile_httproute(
     let executor = ReconcileExecutor::new(ctx.client.clone());
     executor.execute(result).await
 }
-
 
 /// Convert an HTTPRoute to our internal RouteConfig format
 pub fn convert_httproute_to_config(
@@ -462,7 +461,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::core::validate::{find_matching_listeners, is_namespace_allowed, AllowedNamespaces};
+    use crate::core::validate::{AllowedNamespaces, find_matching_listeners, is_namespace_allowed};
     use gateway_crds::{
         HttpRouteRulesFiltersRequestHeaderModifier, HttpRouteRulesFiltersRequestRedirect,
         HttpRouteRulesFiltersRequestRedirectPath, HttpRouteRulesFiltersRequestRedirectPathType,

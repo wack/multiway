@@ -113,8 +113,7 @@ impl WorldSnapshot {
 
     /// Get a Secret by namespace and name
     pub fn get_secret(&self, namespace: &str, name: &str) -> Option<&Secret> {
-        self.secrets
-            .get(&(namespace.to_string(), name.to_string()))
+        self.secrets.get(&(namespace.to_string(), name.to_string()))
     }
 
     /// Get all HTTPRoutes referencing a specific Gateway
@@ -172,7 +171,11 @@ impl WorldSnapshot {
                 let allows_from = grant.spec.from.iter().any(|f| {
                     f.namespace == from_ns && f.group == from_group && f.kind == from_kind
                 });
-                let allows_to = grant.spec.to.iter().any(|t| t.group == to_group && t.kind == to_kind);
+                let allows_to = grant
+                    .spec
+                    .to
+                    .iter()
+                    .any(|t| t.group == to_group && t.kind == to_kind);
                 allows_from && allows_to
             })
     }
@@ -191,7 +194,14 @@ impl WorldSnapshot {
 
     /// Check if a cross-namespace Service reference is allowed
     pub fn is_service_reference_allowed(&self, from_ns: &str, to_ns: &str) -> bool {
-        self.is_reference_allowed(from_ns, "gateway.networking.k8s.io", "HTTPRoute", to_ns, "", "Service")
+        self.is_reference_allowed(
+            from_ns,
+            "gateway.networking.k8s.io",
+            "HTTPRoute",
+            to_ns,
+            "",
+            "Service",
+        )
     }
 }
 

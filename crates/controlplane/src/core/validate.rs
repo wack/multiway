@@ -212,7 +212,9 @@ pub enum AllowedNamespaces {
     /// Same namespace as the Gateway
     Same(String),
     /// Namespaces matching a label selector
-    Selector { match_labels: BTreeMap<String, String> },
+    Selector {
+        match_labels: BTreeMap<String, String>,
+    },
 }
 
 /// Get the allowed namespaces for routes on a listener
@@ -278,10 +280,7 @@ pub fn validate_parent_ref(
     parent_ref: &HttpRouteParentRefs,
     route_namespace: &str,
 ) -> ParentRefValidation {
-    let parent_namespace = parent_ref
-        .namespace
-        .as_deref()
-        .unwrap_or(route_namespace);
+    let parent_namespace = parent_ref.namespace.as_deref().unwrap_or(route_namespace);
     let parent_name = &parent_ref.name;
 
     // Verify the parent is a Gateway
@@ -341,11 +340,7 @@ pub fn validate_parent_ref(
     }
 
     // Check namespace permissions
-    let gateway_namespace = gateway
-        .metadata
-        .namespace
-        .as_deref()
-        .unwrap_or_default();
+    let gateway_namespace = gateway.metadata.namespace.as_deref().unwrap_or_default();
     let mut allowed = false;
 
     for listener in &matching_listeners {
@@ -391,10 +386,7 @@ pub fn validate_parent_ref(
     }
 
     // Route is accepted
-    let attached_listener_names = matching_listeners
-        .iter()
-        .map(|l| l.name.clone())
-        .collect();
+    let attached_listener_names = matching_listeners.iter().map(|l| l.name.clone()).collect();
 
     ParentRefValidation {
         parent_ref: parent_ref.clone(),
@@ -417,16 +409,16 @@ pub fn find_matching_listeners<'a>(
         .iter()
         .filter(|l| {
             // Match by section name if specified
-            if let Some(name) = section_name {
-                if l.name != name {
-                    return false;
-                }
+            if let Some(name) = section_name
+                && l.name != name
+            {
+                return false;
             }
             // Match by port if specified
-            if let Some(p) = port {
-                if l.port != p {
-                    return false;
-                }
+            if let Some(p) = port
+                && l.port != p
+            {
+                return false;
             }
             // Must be HTTP or HTTPS protocol
             let protocol = l.protocol.to_uppercase();
@@ -458,7 +450,10 @@ pub fn validate_backend(
     if !backend_group.is_empty() || backend_kind != "Service" {
         return Some(BackendValidationError {
             reason: "InvalidBackendRef",
-            message: format!("Unsupported backend type: {}/{}", backend_group, backend_kind),
+            message: format!(
+                "Unsupported backend type: {}/{}",
+                backend_group, backend_kind
+            ),
         });
     }
 
@@ -466,10 +461,7 @@ pub fn validate_backend(
     if !snapshot.service_exists(backend_namespace, &backend.name) {
         return Some(BackendValidationError {
             reason: "BackendNotFound",
-            message: format!(
-                "Service {}/{} not found",
-                backend_namespace, backend.name
-            ),
+            message: format!("Service {}/{} not found", backend_namespace, backend.name),
         });
     }
 
@@ -494,8 +486,8 @@ mod tests {
     use super::*;
     use crate::core::snapshot::WorldSnapshotBuilder;
     use gateway_crds::{
-        GatewayClassSpec, GatewayListenersTls, GatewayListenersTlsMode, GatewaySpec,
-        HttpRouteSpec, ReferenceGrantFrom, ReferenceGrantSpec, ReferenceGrantTo,
+        GatewayClassSpec, GatewayListenersTls, GatewayListenersTlsMode, GatewaySpec, HttpRouteSpec,
+        ReferenceGrantFrom, ReferenceGrantSpec, ReferenceGrantTo,
     };
     use k8s_openapi::api::core::v1::Service;
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
@@ -654,16 +646,18 @@ mod tests {
                 parameters_ref: None,
             },
             status: Some(gateway_crds::GatewayClassStatus {
-                conditions: Some(vec![k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition {
-                    type_: "Accepted".to_string(),
-                    status: "True".to_string(),
-                    observed_generation: Some(1),
-                    last_transition_time: k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
-                        chrono::Utc::now(),
-                    ),
-                    reason: "Accepted".to_string(),
-                    message: "Accepted".to_string(),
-                }]),
+                conditions: Some(vec![
+                    k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition {
+                        type_: "Accepted".to_string(),
+                        status: "True".to_string(),
+                        observed_generation: Some(1),
+                        last_transition_time: k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
+                            chrono::Utc::now(),
+                        ),
+                        reason: "Accepted".to_string(),
+                        message: "Accepted".to_string(),
+                    },
+                ]),
                 supported_features: None,
             }),
         }

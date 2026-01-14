@@ -53,7 +53,8 @@ impl ReconcileResult {
 
     /// Add a Deployment to create or update
     pub fn upsert_deployment(mut self, deployment: Deployment) -> Self {
-        self.upserts.push(ResourceUpsert::Deployment(deployment));
+        self.upserts
+            .push(ResourceUpsert::Deployment(Box::new(deployment)));
         self
     }
 
@@ -176,7 +177,7 @@ impl ReconcileResult {
         self.upserts
             .iter()
             .filter_map(|u| match u {
-                ResourceUpsert::Deployment(d) => Some(d),
+                ResourceUpsert::Deployment(d) => Some(d.as_ref()),
                 _ => None,
             })
             .collect()
@@ -241,9 +242,10 @@ impl ReconcileResult {
 
 /// A resource to create or update
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum ResourceUpsert {
-    /// Create or update a Deployment
-    Deployment(Deployment),
+    /// Create or update a Deployment (boxed due to large size)
+    Deployment(Box<Deployment>),
     /// Create or update a Service
     Service(Service),
     /// Create or update a ConfigMap

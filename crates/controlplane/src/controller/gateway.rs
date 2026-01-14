@@ -109,7 +109,6 @@ async fn reconcile_gateway(gateway: Arc<Gateway>, ctx: Arc<ControllerContext>) -
     executor.execute(result).await
 }
 
-
 /// Error policy for Gateway reconciliation
 fn error_policy(
     _obj: Arc<Gateway>,
@@ -129,8 +128,12 @@ mod tests {
         GatewayListenersAllowedRoutesNamespacesFrom, GatewayListenersTls, GatewayListenersTlsMode,
     };
 
-    use crate::controller::config::{DataPlaneNames, GATEWAY_NAME_LABEL, MANAGED_BY_LABEL, MANAGED_BY_VALUE};
-    use crate::core::validate::{get_allowed_route_namespaces, validate_listeners, AllowedNamespaces};
+    use crate::controller::config::{
+        DataPlaneNames, GATEWAY_NAME_LABEL, MANAGED_BY_LABEL, MANAGED_BY_VALUE,
+    };
+    use crate::core::validate::{
+        AllowedNamespaces, get_allowed_route_namespaces, validate_listeners,
+    };
 
     fn create_http_listener(name: &str, port: i32) -> GatewayListeners {
         GatewayListeners {

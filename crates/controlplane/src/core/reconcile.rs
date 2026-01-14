@@ -19,7 +19,9 @@ use k8s_openapi::api::core::v1::{
     ResourceRequirements, Service, ServicePort, ServiceSpec, Volume, VolumeMount,
 };
 use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
-use k8s_openapi::apimachinery::pkg::apis::meta::v1::{Condition, LabelSelector, OwnerReference, Time};
+use k8s_openapi::apimachinery::pkg::apis::meta::v1::{
+    Condition, LabelSelector, OwnerReference, Time,
+};
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use k8s_openapi::chrono::Utc;
 use kube::{Resource, ResourceExt};
@@ -27,8 +29,8 @@ use kube::{Resource, ResourceExt};
 use super::result::ReconcileResult;
 use super::snapshot::WorldSnapshot;
 use super::validate::{
-    get_accepted_gateway_class, is_our_gateway_class, validate_gateway_class, validate_listeners,
-    validate_parent_ref, SUPPORTED_FEATURES,
+    SUPPORTED_FEATURES, get_accepted_gateway_class, is_our_gateway_class, validate_gateway_class,
+    validate_listeners, validate_parent_ref,
 };
 use crate::controller::config::{
     CONFIG_KEY, DataPlaneNames, GatewayConfig, ListenerConfig, Protocol,
@@ -307,7 +309,11 @@ fn build_gateway_status_with_routes(
 }
 
 /// Build GatewayConfig for the data plane
-fn build_gateway_config(gateway: &Gateway, namespace: &str, snapshot: &WorldSnapshot) -> GatewayConfig {
+fn build_gateway_config(
+    gateway: &Gateway,
+    namespace: &str,
+    snapshot: &WorldSnapshot,
+) -> GatewayConfig {
     let mut config = GatewayConfig::new(namespace, gateway.name_any());
 
     // Add listeners
@@ -396,7 +402,11 @@ fn build_service(names: &DataPlaneNames, gateway: &Gateway) -> Service {
 }
 
 /// Build a Deployment for the data plane
-fn build_deployment(names: &DataPlaneNames, gateway: &Gateway, config: &ControllerConfig) -> Deployment {
+fn build_deployment(
+    names: &DataPlaneNames,
+    gateway: &Gateway,
+    config: &ControllerConfig,
+) -> Deployment {
     let ports: Vec<ContainerPort> = gateway
         .spec
         .listeners
@@ -706,7 +716,12 @@ mod tests {
         }
     }
 
-    fn create_httproute(ns: &str, name: &str, gw_ns: &str, gw_name: &str) -> gateway_crds::HTTPRoute {
+    fn create_httproute(
+        ns: &str,
+        name: &str,
+        gw_ns: &str,
+        gw_name: &str,
+    ) -> gateway_crds::HTTPRoute {
         gateway_crds::HTTPRoute {
             metadata: ObjectMeta {
                 name: Some(name.to_string()),
@@ -815,7 +830,9 @@ mod tests {
         let result = reconcile_gateway(&snapshot, &config, "default", "my-gateway");
 
         // Should update status with error
-        let status = result.gateway_status_update("default", "my-gateway").unwrap();
+        let status = result
+            .gateway_status_update("default", "my-gateway")
+            .unwrap();
         let conditions = status.conditions.as_ref().unwrap();
         let accepted = conditions.iter().find(|c| c.type_ == "Accepted").unwrap();
         assert_eq!(accepted.status, "False");
@@ -844,7 +861,9 @@ mod tests {
         assert_eq!(result.configmap_upserts().len(), 1);
 
         // Should update status with success
-        let status = result.gateway_status_update("default", "my-gateway").unwrap();
+        let status = result
+            .gateway_status_update("default", "my-gateway")
+            .unwrap();
         let conditions = status.conditions.as_ref().unwrap();
         let accepted = conditions.iter().find(|c| c.type_ == "Accepted").unwrap();
         assert_eq!(accepted.status, "True");
@@ -868,10 +887,7 @@ mod tests {
             deployment.metadata.name,
             Some("multiway-dp-my-gateway".to_string())
         );
-        assert_eq!(
-            deployment.metadata.namespace,
-            Some("default".to_string())
-        );
+        assert_eq!(deployment.metadata.namespace, Some("default".to_string()));
 
         // Check owner reference
         let owner_refs = deployment.metadata.owner_references.as_ref().unwrap();
@@ -933,7 +949,9 @@ mod tests {
         let result = reconcile_httproute(&snapshot, &config, "default", "my-route");
 
         // Should update status with error
-        let status = result.httproute_status_update("default", "my-route").unwrap();
+        let status = result
+            .httproute_status_update("default", "my-route")
+            .unwrap();
         assert_eq!(status.parents.len(), 1);
 
         let accepted = status.parents[0]
@@ -961,7 +979,9 @@ mod tests {
         let result = reconcile_httproute(&snapshot, &config, "default", "my-route");
 
         // Should update status with success
-        let status = result.httproute_status_update("default", "my-route").unwrap();
+        let status = result
+            .httproute_status_update("default", "my-route")
+            .unwrap();
         assert_eq!(status.parents.len(), 1);
 
         let accepted = status.parents[0]

@@ -112,49 +112,49 @@ impl SnapshotFetcher {
         };
 
         // Fetch parent Gateways and their GatewayClasses
-        if let Some(ref r) = route {
-            if let Some(parent_refs) = &r.spec.parent_refs {
-                for parent_ref in parent_refs {
-                    let parent_ns = parent_ref.namespace.as_deref().unwrap_or(namespace);
-                    let parent_name = &parent_ref.name;
+        if let Some(ref r) = route
+            && let Some(parent_refs) = &r.spec.parent_refs
+        {
+            for parent_ref in parent_refs {
+                let parent_ns = parent_ref.namespace.as_deref().unwrap_or(namespace);
+                let parent_name = &parent_ref.name;
 
-                    // Only process Gateway parents
-                    let parent_kind = parent_ref.kind.as_deref().unwrap_or("Gateway");
-                    let parent_group = parent_ref
-                        .group
-                        .as_deref()
-                        .unwrap_or("gateway.networking.k8s.io");
+                // Only process Gateway parents
+                let parent_kind = parent_ref.kind.as_deref().unwrap_or("Gateway");
+                let parent_group = parent_ref
+                    .group
+                    .as_deref()
+                    .unwrap_or("gateway.networking.k8s.io");
 
-                    if parent_group != "gateway.networking.k8s.io" || parent_kind != "Gateway" {
-                        continue;
+                if parent_group != "gateway.networking.k8s.io" || parent_kind != "Gateway" {
+                    continue;
+                }
+
+                // Fetch the Gateway
+                let gw_api: Api<Gateway> = Api::namespaced(self.client.clone(), parent_ns);
+                match gw_api.get(parent_name).await {
+                    Ok(gw) => {
+                        // Fetch the GatewayClass
+                        let gc_api: Api<GatewayClass> = Api::all(self.client.clone());
+                        if let Ok(gc) = gc_api.get(&gw.spec.gateway_class_name).await {
+                            builder = builder.with_gateway_class(gc);
+                        }
+
+                        // Fetch managed resources for this Gateway
+                        let names = DataPlaneNames::new(parent_ns, parent_name);
+                        builder = self.fetch_managed_resources(&mut builder, &names).await?;
+
+                        builder = builder.with_gateway(gw);
                     }
-
-                    // Fetch the Gateway
-                    let gw_api: Api<Gateway> = Api::namespaced(self.client.clone(), parent_ns);
-                    match gw_api.get(parent_name).await {
-                        Ok(gw) => {
-                            // Fetch the GatewayClass
-                            let gc_api: Api<GatewayClass> = Api::all(self.client.clone());
-                            if let Ok(gc) = gc_api.get(&gw.spec.gateway_class_name).await {
-                                builder = builder.with_gateway_class(gc);
-                            }
-
-                            // Fetch managed resources for this Gateway
-                            let names = DataPlaneNames::new(parent_ns, parent_name);
-                            builder = self.fetch_managed_resources(&mut builder, &names).await?;
-
-                            builder = builder.with_gateway(gw);
-                        }
-                        Err(kube::Error::Api(err)) if err.code == 404 => {
-                            debug!(
-                                namespace = parent_ns,
-                                name = parent_name,
-                                "Parent Gateway not found"
-                            );
-                        }
-                        Err(e) => {
-                            warn!(error = %e, "Error fetching parent Gateway");
-                        }
+                    Err(kube::Error::Api(err)) if err.code == 404 => {
+                        debug!(
+                            namespace = parent_ns,
+                            name = parent_name,
+                            "Parent Gateway not found"
+                        );
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Error fetching parent Gateway");
                     }
                 }
             }
@@ -162,7 +162,9 @@ impl SnapshotFetcher {
 
         // Fetch backend Services referenced by the route
         if let Some(ref r) = route {
-            builder = self.fetch_backend_services(&mut builder, r, namespace).await?;
+            builder = self
+                .fetch_backend_services(&mut builder, r, namespace)
+                .await?;
         }
 
         // Fetch ReferenceGrants that might be relevant
@@ -250,24 +252,22 @@ impl SnapshotFetcher {
         let mut result = std::mem::take(builder);
 
         for route in routes {
-            let references_gateway =
-                route
-                    .spec
-                    .parent_refs
-                    .as_ref()
-                    .is_some_and(|refs| {
-                        refs.iter().any(|r| {
-                            let ref_ns = r.namespace.as_deref().unwrap_or(
-                                route.metadata.namespace.as_deref().unwrap_or_default(),
-                            );
-                            ref_ns == gateway_ns && r.name == gateway_name
-                        })
-                    });
+            let references_gateway = route.spec.parent_refs.as_ref().is_some_and(|refs| {
+                refs.iter().any(|r| {
+                    let ref_ns = r
+                        .namespace
+                        .as_deref()
+                        .unwrap_or(route.metadata.namespace.as_deref().unwrap_or_default());
+                    ref_ns == gateway_ns && r.name == gateway_name
+                })
+            });
 
             if references_gateway {
                 // Also fetch backend services for this route
                 let route_ns = route.namespace().unwrap_or_default();
-                result = self.fetch_backend_services(&mut result, &route, &route_ns).await?;
+                result = self
+                    .fetch_backend_services(&mut result, &route, &route_ns)
+                    .await?;
                 result = result.with_httproute(route);
             }
         }
@@ -368,8 +368,8 @@ impl SnapshotFetcher {
             let grant_ns = grant.namespace().unwrap_or_default();
 
             // Include if it's in a namespace we care about
-            let is_relevant = grant_ns == namespace
-                || grant.spec.from.iter().any(|f| f.namespace == namespace);
+            let is_relevant =
+                grant_ns == namespace || grant.spec.from.iter().any(|f| f.namespace == namespace);
 
             if is_relevant {
                 result = result.with_reference_grant(grant);

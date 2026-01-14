@@ -15,7 +15,9 @@ use kube::{Api, Client};
 use tracing::{debug, error, info, warn};
 
 use crate::controller::error::Result;
-use crate::core::result::{ReconcileResult, RequeueDecision, ResourceDelete, ResourceUpsert, StatusUpdate};
+use crate::core::result::{
+    ReconcileResult, RequeueDecision, ResourceDelete, ResourceUpsert, StatusUpdate,
+};
 
 /// Executes ReconcileResults against a Kubernetes cluster.
 pub struct ReconcileExecutor {
@@ -87,18 +89,10 @@ impl ReconcileExecutor {
     /// Execute a single resource upsert
     async fn execute_upsert(&self, upsert: &ResourceUpsert) -> Result<()> {
         match upsert {
-            ResourceUpsert::Deployment(deployment) => {
-                self.upsert_deployment(deployment).await
-            }
-            ResourceUpsert::Service(service) => {
-                self.upsert_service(service).await
-            }
-            ResourceUpsert::ConfigMap(configmap) => {
-                self.upsert_configmap(configmap).await
-            }
-            ResourceUpsert::ServiceAccount(sa) => {
-                self.upsert_serviceaccount(sa).await
-            }
+            ResourceUpsert::Deployment(deployment) => self.upsert_deployment(deployment).await,
+            ResourceUpsert::Service(service) => self.upsert_service(service).await,
+            ResourceUpsert::ConfigMap(configmap) => self.upsert_configmap(configmap).await,
+            ResourceUpsert::ServiceAccount(sa) => self.upsert_serviceaccount(sa).await,
         }
     }
 
@@ -238,11 +232,7 @@ impl ReconcileExecutor {
 
     /// Upsert a ConfigMap
     async fn upsert_configmap(&self, configmap: &ConfigMap) -> Result<()> {
-        let namespace = configmap
-            .metadata
-            .namespace
-            .as_deref()
-            .unwrap_or("default");
+        let namespace = configmap.metadata.namespace.as_deref().unwrap_or("default");
         let name = configmap.metadata.name.as_deref().unwrap();
         let api: Api<ConfigMap> = Api::namespaced(self.client.clone(), namespace);
 
