@@ -1,0 +1,39 @@
+name: "On Push – Validate Build"
+
+on:
+  push:
+    # Skip running this on the default branch, since the merge queue
+    # takes care of validating the commit.
+    branches:    
+      - '**'
+      - '!trunk'   # excludes trunk
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Do not change this job's name without also changing "pr-ready"'s
+  # job name in "on-merge.yml". These jobs must have the same name.
+  # See the README for more details.
+  pr-ready:
+    if: always()
+    name: "⚡ PR Ready"
+    runs-on: ubuntu-22.04
+    needs:
+    - "build"
+    steps:
+      - if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')  || contains(needs.*.result, 'skipped') }}
+        run: |
+          echo "One or more dependent jobs failed, was skipped, or was cancelled. All jobs must pass for the PR to be ready."
+          exit 1
+      - run: echo "OK"
+  # This job installs Cargo Make and Cargo Nextest before running
+  # the CI workflow using Cargo Make. Most of the time, it should
+  # restore Cargo Make and other dependencies from cache.
+  build:
+    name: Validate Rust Build
+    uses: "wack/gh-actions/.github/workflows/validate.yml@trunk"
+    permissions:
+      id-token: "write"
+      contents: "read"
+      attestations: "write"
