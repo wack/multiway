@@ -28,16 +28,27 @@ jobs:
           exit 1
       - run: echo "OK"
 
-  # This job installs Cargo Make and Cargo Nextest before running
-  # the CI workflow using Cargo Make. Most of the time, it should
-  # restore Cargo Make and other dependencies from cache.
   build:
     name: Validate Rust Build
-    uses: "wack/gh-actions/.github/workflows/validate.yml@trunk"
-    permissions:
-      id-token: "write"
-      contents: "read"
-      attestations: "write"
+    runs-on: ubuntu-24.04
+    steps:
+    - name: "Setup Rust"
+      uses: "wack/gh-actions/setup-rust@trunk"
+
+    - name: Install kopium
+      run: which kopium || cargo install kopium
+  
+    - name: Cache cargo tools
+      uses: actions/cache@v4
+      with:
+        path: ~/.cargo/bin
+        key: ${{ matrix.runner }}-cargo-tools-kopium-cargo-make
+
+    - name: Generate Gateway API CRDs
+      run: cargo make gen-crds
+    # This is the actual "validation" step.
+    - name: "Cargo Make"
+      run: cargo make ci-flow
 
   docker:
     name: Build ${{ matrix.component }} (${{ matrix.arch }})
