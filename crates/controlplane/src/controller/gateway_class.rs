@@ -11,37 +11,18 @@
 use std::sync::Arc;
 
 use futures::StreamExt;
-use gateway_crds::{GatewayClass, GatewayClassStatus, GatewayClassStatusSupportedFeatures};
-use k8s_openapi::apimachinery::pkg::apis::meta::v1::{Condition, Time};
-use k8s_openapi::chrono::Utc;
-use kube::api::{Patch, PatchParams};
+use gateway_crds::GatewayClass;
 use kube::runtime::controller::{Action, Controller};
 use kube::runtime::watcher::Config as WatcherConfig;
 use kube::{Api, Client, ResourceExt};
 use tokio::time::Duration;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, info, instrument};
 
 use super::config::CONTROLLER_NAME;
 use super::context::ControllerContext;
 use super::error::{ControllerError, Result};
-
-/// Supported features for this Gateway implementation
-const SUPPORTED_FEATURES: &[&str] = &[
-    "Gateway",
-    "HTTPRoute",
-    "HTTPRouteDestinationPortMatching",
-    "HTTPRouteHostRewrite",
-    "HTTPRouteMethodMatching",
-    "HTTPRoutePathRedirect",
-    "HTTPRoutePathRewrite",
-    "HTTPRoutePortRedirect",
-    "HTTPRouteQueryParamMatching",
-    "HTTPRouteRequestHeaderModifier",
-    "HTTPRouteRequestMirror",
-    "HTTPRouteRequestRedirect",
-    "HTTPRouteResponseHeaderModifier",
-    "HTTPRouteSchemeRedirect",
-];
+use crate::core;
+use crate::shell::{ReconcileExecutor, SnapshotFetcher};
 
 /// Run the GatewayClass controller
 ///
@@ -79,7 +60,7 @@ pub async fn run_gateway_class_controller(ctx: Arc<ControllerContext>) {
     controller.await;
 }
 
-/// Reconcile a single GatewayClass resource
+/// Reconcile a single GatewayClass resource using the functional core
 #[instrument(skip_all, fields(name = %gateway_class.name_any()))]
 async fn reconcile_gateway_class(
     gateway_class: Arc<GatewayClass>,
@@ -88,110 +69,16 @@ async fn reconcile_gateway_class(
     let name = gateway_class.name_any();
     info!("Reconciling GatewayClass");
 
-    // Check if this GatewayClass is for our controller
-    if gateway_class.spec.controller_name != CONTROLLER_NAME {
-        debug!(
-            controller_name = %gateway_class.spec.controller_name,
-            expected = %CONTROLLER_NAME,
-            "Ignoring GatewayClass with different controller"
-        );
-        // Requeue after a long interval since we're not responsible for this class
-        return Ok(Action::requeue(Duration::from_secs(3600)));
-    }
+    // Build snapshot from cluster state
+    let fetcher = SnapshotFetcher::new(ctx.client.clone());
+    let snapshot = fetcher.snapshot_for_gateway_class(&name).await?;
 
-    // Validate the GatewayClass configuration
-    let (accepted, reason, message) = validate_gateway_class(&gateway_class);
+    // Pure reconciliation - compute what needs to be done
+    let result = core::reconcile_gateway_class(&snapshot, &ctx.config, &name);
 
-    // Update the status
-    update_gateway_class_status(
-        &ctx.client,
-        &name,
-        gateway_class.metadata.generation,
-        accepted,
-        reason,
-        &message,
-    )
-    .await?;
-
-    if accepted {
-        info!("GatewayClass accepted");
-    } else {
-        warn!(reason, %message, "GatewayClass not accepted");
-    }
-
-    // Requeue after the configured interval
-    Ok(Action::requeue(Duration::from_secs(
-        ctx.config.requeue_after_secs,
-    )))
-}
-
-/// Validate the GatewayClass configuration
-///
-/// Returns (accepted, reason, message)
-fn validate_gateway_class(gateway_class: &GatewayClass) -> (bool, &'static str, String) {
-    // Check for parametersRef - we don't support custom parameters yet
-    if let Some(params_ref) = &gateway_class.spec.parameters_ref {
-        // Log that we're ignoring parameters
-        debug!(
-            group = %params_ref.group,
-            kind = %params_ref.kind,
-            name = %params_ref.name,
-            "GatewayClass has parametersRef (not currently supported, will be ignored)"
-        );
-    }
-
-    // The GatewayClass is valid and accepted
-    (
-        true,
-        "Accepted",
-        "GatewayClass is accepted by the multiway controller".to_string(),
-    )
-}
-
-/// Update the status of a GatewayClass
-async fn update_gateway_class_status(
-    client: &Client,
-    name: &str,
-    generation: Option<i64>,
-    accepted: bool,
-    reason: &str,
-    message: &str,
-) -> Result<()> {
-    let api: Api<GatewayClass> = Api::all(client.clone());
-
-    let now = Time(Utc::now());
-    let status_value = if accepted { "True" } else { "False" };
-
-    let condition = Condition {
-        type_: "Accepted".to_string(),
-        status: status_value.to_string(),
-        observed_generation: generation,
-        last_transition_time: now,
-        reason: reason.to_string(),
-        message: message.to_string(),
-    };
-
-    // Build supported features list
-    let supported_features: Vec<GatewayClassStatusSupportedFeatures> = SUPPORTED_FEATURES
-        .iter()
-        .map(|f| GatewayClassStatusSupportedFeatures {
-            name: f.to_string(),
-        })
-        .collect();
-
-    let status = GatewayClassStatus {
-        conditions: Some(vec![condition]),
-        supported_features: Some(supported_features),
-    };
-
-    let patch = serde_json::json!({
-        "status": status
-    });
-
-    api.patch_status(name, &PatchParams::default(), &Patch::Merge(&patch))
-        .await?;
-
-    Ok(())
+    // Execute the computed effects
+    let executor = ReconcileExecutor::new(ctx.client.clone());
+    executor.execute(result).await
 }
 
 /// Error policy for GatewayClass reconciliation
@@ -216,12 +103,11 @@ pub fn is_gateway_class_accepted(gateway_class: &GatewayClass) -> bool {
         .status
         .as_ref()
         .and_then(|status| status.conditions.as_ref())
-        .map(|conditions| {
+        .is_some_and(|conditions| {
             conditions
                 .iter()
                 .any(|c| c.type_ == "Accepted" && c.status == "True")
         })
-        .unwrap_or(false)
 }
 
 /// Get the GatewayClass for a Gateway, if it's accepted
@@ -247,7 +133,10 @@ pub async fn get_accepted_gateway_class(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gateway_crds::GatewayClassParametersRef;
+    use crate::core::validate::SUPPORTED_FEATURES;
+    use gateway_crds::GatewayClassStatus;
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::{Condition, Time};
+    use k8s_openapi::chrono::Utc;
 
     fn create_test_gateway_class(controller_name: &str) -> GatewayClass {
         GatewayClass {
@@ -269,17 +158,6 @@ mod tests {
     // GatewayClass Spec Compliance Tests
     // ==========================================
 
-    /// Spec: GatewayClass.spec.controllerName determines which controller is responsible
-    /// Controllers should only respond to GatewayClasses with matching controllerName
-    #[test]
-    fn test_controller_name_matching() {
-        // Our controller name should be accepted
-        let gc = create_test_gateway_class(CONTROLLER_NAME);
-        let (accepted, reason, _) = validate_gateway_class(&gc);
-        assert!(accepted);
-        assert_eq!(reason, "Accepted");
-    }
-
     /// Spec: Controller name format is recommended to be domain/path
     /// Our controller name follows this convention: io.multiway/gateway-controller
     #[test]
@@ -287,45 +165,6 @@ mod tests {
         // Verify our controller name follows domain/path convention
         assert!(CONTROLLER_NAME.contains('/'));
         assert!(CONTROLLER_NAME.starts_with("io.multiway"));
-    }
-
-    /// Spec: A new GatewayClass should start with Accepted=False until processed
-    /// Once processed, condition should be set to True
-    #[test]
-    fn test_validate_gateway_class() {
-        let gc = create_test_gateway_class(CONTROLLER_NAME);
-        let (accepted, reason, _message) = validate_gateway_class(&gc);
-        assert!(accepted);
-        assert_eq!(reason, "Accepted");
-    }
-
-    /// Spec: parametersRef allows passing controller-specific parameters
-    /// Our implementation logs but ignores parametersRef (still accepts the class)
-    #[test]
-    fn test_gateway_class_with_parameters_ref() {
-        let mut gc = create_test_gateway_class(CONTROLLER_NAME);
-        gc.spec.parameters_ref = Some(GatewayClassParametersRef {
-            group: "example.net".to_string(),
-            kind: "Config".to_string(),
-            name: "my-config".to_string(),
-            namespace: Some("default".to_string()),
-        });
-
-        // Should still be accepted even with parametersRef
-        let (accepted, reason, _) = validate_gateway_class(&gc);
-        assert!(accepted);
-        assert_eq!(reason, "Accepted");
-    }
-
-    /// Spec: GatewayClass with optional description field
-    #[test]
-    fn test_gateway_class_with_description() {
-        let mut gc = create_test_gateway_class(CONTROLLER_NAME);
-        gc.spec.description = Some("A test gateway class for unit testing".to_string());
-
-        let (accepted, reason, _) = validate_gateway_class(&gc);
-        assert!(accepted);
-        assert_eq!(reason, "Accepted");
     }
 
     // ==========================================
