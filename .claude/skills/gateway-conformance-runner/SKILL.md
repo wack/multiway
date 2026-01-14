@@ -113,7 +113,7 @@ This approach runs the conformance tests directly from the Gateway API repositor
 5. **Run Conformance Tests**:
    - Navigate to the conformance suite directory and run tests:
      ```bash
-     cd $GATEWAY_CONFORMANCE_SUITE/conformance && make conformance
+     cd $GATEWAY_CONFORMANCE_SUITE && make conformance
      ```
    - The test suite will run directly on your local machine and interact with the cluster
    - Results will be displayed in real-time in your terminal
