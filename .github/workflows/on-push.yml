@@ -4,9 +4,13 @@ on:
   push:
     # Skip running this on the default branch, since the merge queue
     # takes care of validating the commit.
-    branches:    
+    branches:
       - '**'
       - '!trunk'   # excludes trunk
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
