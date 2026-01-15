@@ -1,6 +1,6 @@
 use clap::{CommandFactory, Parser};
 use multiway::cli::{Cli, LogFormat};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 fn main() -> miette::Result<()> {
     let cli = Cli::parse();
