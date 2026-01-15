@@ -354,7 +354,8 @@ description = "Build control plane image for current platform"
 category = "Docker"
 script_runner = "@shell"
 script = '''
-docker build \
+DOCKER_BUILDKIT=1 docker build \
+  --build-arg BUILDKIT_INLINE_CACHE=1 \
   -t multiway-controlplane:latest \
   -f crates/controlplane/Dockerfile \
   .
@@ -365,7 +366,8 @@ description = "Build data plane image for current platform"
 category = "Docker"
 script_runner = "@shell"
 script = '''
-docker build \
+DOCKER_BUILDKIT=1 docker build \
+  --build-arg BUILDKIT_INLINE_CACHE=1 \
   -t multiway-dataplane:latest \
   -f crates/dataplane/Dockerfile \
   .
@@ -387,6 +389,7 @@ echo "Note: Multi-platform images cannot be loaded into local Docker."
 echo "Use docker-build-controlplane for local development or docker-build-controlplane-push to publish."
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
+  --build-arg BUILDKIT_INLINE_CACHE=1 \
   -t multiway-controlplane:latest \
   -f crates/controlplane/Dockerfile \
   .
@@ -403,6 +406,7 @@ echo "Note: Multi-platform images cannot be loaded into local Docker."
 echo "Use docker-build-dataplane for local development or docker-build-dataplane-push to publish."
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
+  --build-arg BUILDKIT_INLINE_CACHE=1 \
   -t multiway-dataplane:latest \
   -f crates/dataplane/Dockerfile \
   .
@@ -427,6 +431,7 @@ fi
 
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
+  --build-arg BUILDKIT_INLINE_CACHE=1 \
   -t ${DOCKER_REGISTRY}/multiway-controlplane:latest \
   -f crates/controlplane/Dockerfile \
   --push \
@@ -447,6 +452,7 @@ fi
 
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
+  --build-arg BUILDKIT_INLINE_CACHE=1 \
   -t ${DOCKER_REGISTRY}/multiway-dataplane:latest \
   -f crates/dataplane/Dockerfile \
   --push \

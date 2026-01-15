@@ -47,7 +47,9 @@ RUN mkdir -p crates/controlplane/src/bin crates/dataplane/src crates/gateway-crd
     echo "fn main() {}" > crates/dataplane/src/main.rs && \
     echo "" > crates/gateway-crds/src/lib.rs && \
     cargo build --release --target $(cat /rust-target.txt) -p multiway-dataplane && \
-    rm -rf crates
+    rm -rf crates && \
+    rm -rf /usr/local/cargo/registry/cache && \
+    rm -rf /usr/local/cargo/git/checkouts
 
 # Copy actual source code
 COPY . .
@@ -57,11 +59,15 @@ COPY . .
 RUN touch crates/dataplane/src/main.rs crates/gateway-crds/src/lib.rs && \
     cargo build --release --target $(cat /rust-target.txt) -p multiway-dataplane
 
-# Copy binary to predictable location
-RUN cp /build/target/$(cat /rust-target.txt)/release/multiway-dataplane /multiway-dataplane
+# Copy binary to predictable location and strip debug symbols
+RUN cp /build/target/$(cat /rust-target.txt)/release/multiway-dataplane /multiway-dataplane && \
+    strip /multiway-dataplane
 
 # Create config directory structure in builder (distroless can't mkdir)
 RUN mkdir -p /etc/multiway
+
+# Clean up build artifacts to reduce final layer size
+RUN rm -rf /build/target /usr/local/cargo/registry /usr/local/cargo/git
 
 # Runtime stage
 FROM gcr.io/distroless/static:nonroot
