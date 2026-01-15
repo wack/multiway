@@ -7,8 +7,8 @@ The current year is 2026. This file provides guidance to Claude Code (claude.ai/
 This project uses [cargo-make](https://github.com/sagiegurari/cargo-make) for task orchestration.
 
 ```bash
-# Build the project
-cargo build
+# Check if code compiles (prefer this over `cargo build` - faster since it skips code generation)
+cargo check
 
 # Run all checks (format, lint, build, test)
 cargo make dev-test-flow
@@ -79,6 +79,15 @@ The conformance tests are configured via environment variables in `conformance/j
 - `SUPPORTED_FEATURES` - Comma-separated list of features (default: `Gateway,HTTPRoute`)
 - `CONFORMANCE_PROFILES` - Optional conformance profiles to run
 - `SHOW_DEBUG` - Enable debug output (`true`/`false`)
+
+## Before Completing a Task
+
+Always validate your changes before considering a task complete:
+
+- **At minimum**: Run `cargo make fmt` to ensure code is properly formatted
+- **Preferred**: Run `cargo make` to run the full test suite (formatting, linting, build, and tests)
+
+Do not commit or mark work as done until validation passes.
 
 ## Architecture
 
