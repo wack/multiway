@@ -7,8 +7,8 @@ The current year is 2026. This file provides guidance to Claude Code (claude.ai/
 This project uses [cargo-make](https://github.com/sagiegurari/cargo-make) for task orchestration.
 
 ```bash
-# Build the project
-cargo build
+# Check if code compiles (prefer this over `cargo build` - faster since it skips code generation)
+cargo check
 
 # Run all checks (format, lint, build, test)
 cargo make dev-test-flow
