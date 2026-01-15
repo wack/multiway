@@ -1,0 +1,32 @@
+# Build artifacts (11GB+)
+target/
+
+# Version control
+.git/
+.gitignore
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Documentation
+docs/
+*.md
+!crates/*/README.md
+
+# Deployment manifests (not needed for build)
+deploy/
+
+# Conformance tests (has own Dockerfile)
+conformance/
+
+# CI/CD
+.github/
+
+# Misc
+.dockerignore
+Makefile.toml
+.crds/

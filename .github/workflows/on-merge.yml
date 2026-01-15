@@ -148,7 +148,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: crates/${{ matrix.component }}/Dockerfile
+          file: Dockerfile
+          target: ${{ matrix.component }}
           platforms: ${{ matrix.platform }}
           push: true
           tags: ${{ steps.tags.outputs.branch_tag && format('{0},{1}', steps.tags.outputs.arch_tag, steps.tags.outputs.branch_tag) || steps.tags.outputs.arch_tag }}
