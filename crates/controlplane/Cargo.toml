@@ -22,8 +22,8 @@ schemars = "1.2.0"
 serde.workspace = true
 serde_json.workspace = true
 static_assertions = "1.1.0"
-thiserror = "2.0.17"
-tokio = { version = "1.48.0", features = ["full"] }
-tracing = { version = "0.1.43", features = ["attributes"] }
-tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 futures = "0.3"
