@@ -99,10 +99,11 @@ COPY --from=builder /multiway-dataplane /usr/local/bin/multiway-dataplane
 # Copy config directory (owned by nonroot user in distroless)
 COPY --from=builder --chown=nonroot:nonroot /etc/multiway /etc/multiway
 
-# Default config path
-ENV CONFIG_PATH=/etc/multiway/config.json
+# Default config path (matches binary default and control plane mount point)
+ENV CONFIG_PATH=/config/config.json
 
 EXPOSE 8080
 
 ENTRYPOINT ["/usr/local/bin/multiway-dataplane"]
-CMD ["--config", "/etc/multiway/config.json"]
+# Config path is set via CONFIG_PATH env var by the control plane
+# Default in binary is /config/config.json which matches control plane mount
