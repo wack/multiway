@@ -1,0 +1,13 @@
+test_name,description,implemented
+HTTPRouteRequestMirror,Request mirroring/shadowing to additional backends for canary testing.,false
+HTTPRouteRequestMultipleMirrors,Multiple request mirrors to several backends simultaneously.,false
+HTTPRouteRequestPercentageMirror,Percentage-based traffic mirroring for gradual testing rollout.,false
+HTTPRouteBackendRequestHeaderModifier,Per-backend header modification separate from route-level modification.,false
+HTTPRouteRequestHeaderModifierBackendWeights,Header modification combined with weighted backend distribution.,false
+HTTPRouteCORSAllowCredentialsBehavior,CORS credential handling for web applications with authentication.,false
+HTTPRouteNamedRule,Named HTTPRoute rules for better observability and metrics reference.,false
+HTTPRouteServiceTypes,Support for various Kubernetes service types (headless/manual endpoint slices).,false
+GatewayModifyListeners,Dynamic listener modification and status updates at runtime.,false
+GatewayHTTPListenerIsolation,Listener isolation ensuring requests don't cross listener boundaries.,false
+GatewayStaticAddresses,Gateway static IP address assignment and management.,false
+GatewayOptionalAddressValue,Optional gateway address handling when address is not specified.,false

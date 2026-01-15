@@ -1,0 +1,11 @@
+test_name,description,implemented
+HTTPRouteHTTPSListener,HTTPS listener support with TLS certificate management and termination.,false
+HTTPRouteRedirectScheme,HTTP to HTTPS redirect for standard security enforcement.,false
+HTTPRouteRedirectPath,Path-based redirects for URL migration and restructuring.,false
+HTTPRouteRedirectPort,Port-based redirects for traffic management.,false
+HTTPRouteRedirectHostAndStatus,Host redirect with HTTP status code control (301/302/etc).,false
+HTTPRouteRedirectPortAndScheme,Combined port and scheme redirects in a single rule.,false
+HTTPRouteTimeoutRequest,Request timeout handling to prevent hung connections.,false
+HTTPRouteTimeoutBackendRequest,Backend connection timeout to handle slow backends.,false
+HTTPRouteCrossNamespace,Cross-namespace route attachment with ReferenceGrant for namespace isolation.,false
+GatewayWithAttachedRoutesWithPort8080,Gateway with routes on non-standard ports (8080).,false
