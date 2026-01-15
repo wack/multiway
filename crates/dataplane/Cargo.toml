@@ -16,7 +16,7 @@ pingora-proxy = "0.6"
 pingora-load-balancing = "0.6"
 
 # Async runtime
-tokio = { version = "1.48", features = ["full"] }
+tokio.workspace = true
 async-trait = "0.1"
 
 # Serialization
@@ -24,12 +24,12 @@ serde.workspace = true
 serde_json.workspace = true
 
 # Error handling
-thiserror = "2.0"
+thiserror.workspace = true
 anyhow = "1.0"
 
 # Logging
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
 # Configuration watching
 notify = "7.0"

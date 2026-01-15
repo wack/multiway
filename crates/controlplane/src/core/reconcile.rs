@@ -368,20 +368,57 @@ fn build_configmap(names: &DataPlaneNames, config: &GatewayConfig, gateway: &Gat
     }
 }
 
+/// Maximum length for Kubernetes port names (IANA service name format, RFC 6335).
+const MAX_PORT_NAME_LENGTH: usize = 15;
+
+/// Sanitize a listener name to be a valid Kubernetes port name.
+///
+/// Kubernetes port names must conform to IANA service name format (RFC 6335):
+/// - Maximum 15 characters
+/// - Alphanumeric with hyphens (no leading/trailing hyphens)
+/// - Must contain at least one letter
+///
+/// Gateway API listener names can be up to 253 characters, so we must truncate
+/// long names. To ensure uniqueness, we append a short hash when truncating.
+fn sanitize_port_name(name: &str) -> String {
+    if name.len() <= MAX_PORT_NAME_LENGTH {
+        return name.to_string();
+    }
+
+    // Generate a simple hash from the full name for uniqueness
+    let hash: u32 = name
+        .bytes()
+        .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
+    let hash_suffix = format!("{:x}", hash & 0xFFFF); // 4 hex chars
+
+    // Truncate name to leave room for hyphen and hash suffix
+    // Format: <truncated>-<hash> where hash is 4 chars, so truncate to 10 chars
+    let truncate_len = MAX_PORT_NAME_LENGTH - 1 - hash_suffix.len(); // 15 - 1 - 4 = 10
+    let truncated: String = name.chars().take(truncate_len).collect();
+
+    // Remove trailing hyphens from truncated part (invalid in port names)
+    let truncated = truncated.trim_end_matches('-');
+
+    format!("{}-{}", truncated, hash_suffix)
+}
+
 /// Build a Service for the data plane
 fn build_service(names: &DataPlaneNames, gateway: &Gateway) -> Service {
-    let ports: Vec<ServicePort> = gateway
-        .spec
-        .listeners
-        .iter()
-        .map(|l| ServicePort {
-            name: Some(l.name.clone()),
-            port: l.port,
-            target_port: Some(IntOrString::Int(l.port)),
-            protocol: Some("TCP".to_string()),
-            ..Default::default()
-        })
-        .collect();
+    // Deduplicate ports: multiple Gateway listeners can share the same port
+    // (e.g., for SNI-based routing), but Kubernetes Services require unique ports.
+    let mut port_map: BTreeMap<i32, ServicePort> = BTreeMap::new();
+    for listener in &gateway.spec.listeners {
+        port_map
+            .entry(listener.port)
+            .or_insert_with(|| ServicePort {
+                name: Some(sanitize_port_name(&listener.name)),
+                port: listener.port,
+                target_port: Some(IntOrString::Int(listener.port)),
+                protocol: Some("TCP".to_string()),
+                ..Default::default()
+            });
+    }
+    let ports: Vec<ServicePort> = port_map.into_values().collect();
 
     Service {
         metadata: kube::core::ObjectMeta {
@@ -407,17 +444,20 @@ fn build_deployment(
     gateway: &Gateway,
     config: &ControllerConfig,
 ) -> Deployment {
-    let ports: Vec<ContainerPort> = gateway
-        .spec
-        .listeners
-        .iter()
-        .map(|l| ContainerPort {
-            name: Some(l.name.clone()),
-            container_port: l.port,
-            protocol: Some("TCP".to_string()),
-            ..Default::default()
-        })
-        .collect();
+    // Deduplicate ports: multiple Gateway listeners can share the same port
+    // (e.g., for SNI-based routing), but Kubernetes rejects duplicate container ports.
+    let mut port_map: BTreeMap<i32, ContainerPort> = BTreeMap::new();
+    for listener in &gateway.spec.listeners {
+        port_map
+            .entry(listener.port)
+            .or_insert_with(|| ContainerPort {
+                name: Some(sanitize_port_name(&listener.name)),
+                container_port: listener.port,
+                protocol: Some("TCP".to_string()),
+                ..Default::default()
+            });
+    }
+    let ports: Vec<ContainerPort> = port_map.into_values().collect();
 
     let mut requests = BTreeMap::new();
     requests.insert(
@@ -994,5 +1034,416 @@ mod tests {
 
         // Should update the Gateway's ConfigMap
         assert!(!result.configmap_upserts().is_empty());
+    }
+
+    // ========================================
+    // Service Generation Tests
+    // ========================================
+
+    #[test]
+    fn test_build_service_deduplicates_ports_for_multiple_listeners_on_same_port() {
+        // Create a Gateway with two listeners on the same port (443)
+        // This is a valid Gateway API configuration for SNI-based routing
+        let gateway = Gateway {
+            metadata: ObjectMeta {
+                name: Some("multi-listener-gateway".to_string()),
+                namespace: Some("default".to_string()),
+                uid: Some("test-uid".to_string()),
+                generation: Some(1),
+                ..Default::default()
+            },
+            spec: GatewaySpec {
+                gateway_class_name: "multiway".to_string(),
+                listeners: vec![
+                    gateway_crds::GatewayListeners {
+                        name: "https-wildcard".to_string(),
+                        port: 443,
+                        protocol: "HTTPS".to_string(),
+                        hostname: Some("*.example.com".to_string()),
+                        allowed_routes: None,
+                        tls: None,
+                    },
+                    gateway_crds::GatewayListeners {
+                        name: "https-specific".to_string(),
+                        port: 443,
+                        protocol: "HTTPS".to_string(),
+                        hostname: Some("api.example.org".to_string()),
+                        allowed_routes: None,
+                        tls: None,
+                    },
+                ],
+                addresses: None,
+                infrastructure: None,
+            },
+            status: None,
+        };
+
+        let names = DataPlaneNames::new("default", "multi-listener-gateway");
+        let service = build_service(&names, &gateway);
+
+        // The Service should have only ONE port entry for port 443,
+        // not two (which would be rejected by Kubernetes)
+        let ports = service.spec.unwrap().ports.unwrap();
+
+        // Count unique port numbers
+        let unique_ports: std::collections::HashSet<i32> = ports.iter().map(|p| p.port).collect();
+        let port_443_count = ports.iter().filter(|p| p.port == 443).count();
+
+        assert_eq!(
+            port_443_count, 1,
+            "Expected exactly 1 ServicePort for port 443, but found {}. \
+             Multiple Gateway listeners can share the same port, but the \
+             generated Service must deduplicate ports.",
+            port_443_count
+        );
+
+        assert_eq!(
+            ports.len(),
+            unique_ports.len(),
+            "Service ports must be unique. Found {} ports but only {} unique port numbers.",
+            ports.len(),
+            unique_ports.len()
+        );
+    }
+
+    #[test]
+    fn test_build_deployment_deduplicates_ports_for_multiple_listeners_on_same_port() {
+        // Create a Gateway with two listeners on the same port (443)
+        // This is a valid Gateway API configuration for SNI-based routing.
+        // Kubernetes rejects Deployments with duplicate container ports.
+        let gateway = Gateway {
+            metadata: ObjectMeta {
+                name: Some("multi-listener-gateway".to_string()),
+                namespace: Some("default".to_string()),
+                uid: Some("test-uid".to_string()),
+                generation: Some(1),
+                ..Default::default()
+            },
+            spec: GatewaySpec {
+                gateway_class_name: "multiway".to_string(),
+                listeners: vec![
+                    gateway_crds::GatewayListeners {
+                        name: "https-wildcard".to_string(),
+                        port: 443,
+                        protocol: "HTTPS".to_string(),
+                        hostname: Some("*.example.com".to_string()),
+                        allowed_routes: None,
+                        tls: None,
+                    },
+                    gateway_crds::GatewayListeners {
+                        name: "https-specific".to_string(),
+                        port: 443,
+                        protocol: "HTTPS".to_string(),
+                        hostname: Some("api.example.org".to_string()),
+                        allowed_routes: None,
+                        tls: None,
+                    },
+                ],
+                addresses: None,
+                infrastructure: None,
+            },
+            status: None,
+        };
+
+        let names = DataPlaneNames::new("default", "multi-listener-gateway");
+        let config = default_config();
+        let deployment = build_deployment(&names, &gateway, &config);
+
+        // The Deployment should have only ONE container port entry for port 443,
+        // not two (which would be rejected by Kubernetes with:
+        // "duplicate entries for key [containerPort=443,protocol="TCP"]")
+        let containers = deployment.spec.unwrap().template.spec.unwrap().containers;
+        let ports = containers[0].ports.as_ref().unwrap();
+
+        // Count container ports by port number
+        let port_443_count = ports.iter().filter(|p| p.container_port == 443).count();
+
+        assert_eq!(
+            port_443_count, 1,
+            "Expected exactly 1 ContainerPort for port 443, but found {}. \
+             Multiple Gateway listeners can share the same port, but the \
+             generated Deployment must deduplicate container ports to avoid \
+             Kubernetes API rejection.",
+            port_443_count
+        );
+
+        // Verify all container ports are unique
+        let unique_ports: std::collections::HashSet<i32> =
+            ports.iter().map(|p| p.container_port).collect();
+        assert_eq!(
+            ports.len(),
+            unique_ports.len(),
+            "Container ports must be unique. Found {} ports but only {} unique port numbers.",
+            ports.len(),
+            unique_ports.len()
+        );
+    }
+
+    #[test]
+    fn test_deployment_port_names_must_not_exceed_15_characters() {
+        // Gateway API allows listener names up to 253 characters (SectionName/RFC 1123),
+        // but Kubernetes container port names must be <= 15 characters (IANA service name format).
+        // This test verifies that port names are properly truncated or transformed.
+        let gateway = Gateway {
+            metadata: ObjectMeta {
+                name: Some("test-gateway".to_string()),
+                namespace: Some("default".to_string()),
+                uid: Some("test-uid".to_string()),
+                generation: Some(1),
+                ..Default::default()
+            },
+            spec: GatewaySpec {
+                gateway_class_name: "multiway".to_string(),
+                listeners: vec![gateway_crds::GatewayListeners {
+                    name: "https-with-hostname".to_string(), // 18 characters - exceeds limit!
+                    port: 443,
+                    protocol: "HTTPS".to_string(),
+                    hostname: Some("example.com".to_string()),
+                    allowed_routes: None,
+                    tls: None,
+                }],
+                addresses: None,
+                infrastructure: None,
+            },
+            status: None,
+        };
+
+        let names = DataPlaneNames::new("default", "test-gateway");
+        let config = default_config();
+        let deployment = build_deployment(&names, &gateway, &config);
+
+        let containers = deployment.spec.unwrap().template.spec.unwrap().containers;
+        let ports = containers[0].ports.as_ref().unwrap();
+
+        // Verify all port names are <= 15 characters (Kubernetes IANA service name limit)
+        for port in ports {
+            if let Some(name) = &port.name {
+                assert!(
+                    name.len() <= 15,
+                    "Container port name '{}' is {} characters, but Kubernetes requires \
+                     port names to be at most 15 characters (IANA service name format). \
+                     Gateway API listener names can be up to 253 characters, so the \
+                     controller must truncate or transform them.",
+                    name,
+                    name.len()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_service_port_names_must_not_exceed_15_characters() {
+        // Same issue applies to Service port names
+        let gateway = Gateway {
+            metadata: ObjectMeta {
+                name: Some("test-gateway".to_string()),
+                namespace: Some("default".to_string()),
+                uid: Some("test-uid".to_string()),
+                generation: Some(1),
+                ..Default::default()
+            },
+            spec: GatewaySpec {
+                gateway_class_name: "multiway".to_string(),
+                listeners: vec![gateway_crds::GatewayListeners {
+                    name: "https-with-hostname".to_string(), // 18 characters - exceeds limit!
+                    port: 443,
+                    protocol: "HTTPS".to_string(),
+                    hostname: Some("example.com".to_string()),
+                    allowed_routes: None,
+                    tls: None,
+                }],
+                addresses: None,
+                infrastructure: None,
+            },
+            status: None,
+        };
+
+        let names = DataPlaneNames::new("default", "test-gateway");
+        let service = build_service(&names, &gateway);
+
+        let ports = service.spec.unwrap().ports.unwrap();
+
+        // Verify all port names are <= 15 characters (Kubernetes IANA service name limit)
+        for port in ports {
+            if let Some(name) = &port.name {
+                assert!(
+                    name.len() <= 15,
+                    "Service port name '{}' is {} characters, but Kubernetes requires \
+                     port names to be at most 15 characters (IANA service name format). \
+                     Gateway API listener names can be up to 253 characters, so the \
+                     controller must truncate or transform them.",
+                    name,
+                    name.len()
+                );
+            }
+        }
+    }
+
+    // ========================================
+    // observedGeneration Tests
+    // ========================================
+
+    #[test]
+    fn test_gateway_class_status_has_correct_observed_generation() {
+        // Create a GatewayClass with generation = 1 (simulating a live K8s resource)
+        let mut gc = create_gateway_class("multiway", crate::controller::config::CONTROLLER_NAME);
+        gc.metadata.generation = Some(1);
+
+        let fixed_time = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        let snapshot = WorldSnapshotBuilder::new()
+            .at_time(fixed_time)
+            .with_gateway_class(gc)
+            .build();
+        let config = default_config();
+
+        let result = reconcile_gateway_class(&snapshot, &config, "multiway");
+
+        // Should update status
+        assert!(
+            result.has_status_updates(),
+            "Expected status update for GatewayClass"
+        );
+
+        let status = result.gateway_class_status_update("multiway").unwrap();
+        let conditions = status.conditions.as_ref().unwrap();
+
+        // The Accepted condition must have observedGeneration matching metadata.generation
+        let accepted = conditions.iter().find(|c| c.type_ == "Accepted").unwrap();
+
+        assert_eq!(
+            accepted.observed_generation,
+            Some(1),
+            "GatewayClass Accepted condition should have observedGeneration=1 matching \
+             metadata.generation, but got {:?}. The Gateway API conformance tests require \
+             observedGeneration to match the resource's generation.",
+            accepted.observed_generation
+        );
+    }
+
+    #[test]
+    fn test_gateway_status_has_correct_observed_generation() {
+        // Create a Gateway with generation = 1 (simulating a live K8s resource)
+        let gc = create_accepted_gateway_class("multiway");
+        let mut gw = create_gateway("default", "my-gateway", "multiway");
+        gw.metadata.generation = Some(1);
+
+        let fixed_time = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        let snapshot = WorldSnapshotBuilder::new()
+            .at_time(fixed_time)
+            .with_gateway_class(gc)
+            .with_gateway(gw)
+            .build();
+        let config = default_config();
+
+        let result = reconcile_gateway(&snapshot, &config, "default", "my-gateway");
+
+        // Should update status
+        let status = result
+            .gateway_status_update("default", "my-gateway")
+            .expect("Expected status update for Gateway");
+        let conditions = status.conditions.as_ref().unwrap();
+
+        // Both Accepted and Programmed conditions must have correct observedGeneration
+        let accepted = conditions
+            .iter()
+            .find(|c| c.type_ == "Accepted")
+            .expect("Expected Accepted condition");
+        let programmed = conditions
+            .iter()
+            .find(|c| c.type_ == "Programmed")
+            .expect("Expected Programmed condition");
+
+        assert_eq!(
+            accepted.observed_generation,
+            Some(1),
+            "Gateway Accepted condition should have observedGeneration=1 matching \
+             metadata.generation, but got {:?}. The Gateway API conformance tests require \
+             observedGeneration to match the resource's generation.",
+            accepted.observed_generation
+        );
+
+        assert_eq!(
+            programmed.observed_generation,
+            Some(1),
+            "Gateway Programmed condition should have observedGeneration=1 matching \
+             metadata.generation, but got {:?}. The Gateway API conformance tests require \
+             observedGeneration to match the resource's generation.",
+            programmed.observed_generation
+        );
+    }
+
+    #[test]
+    fn test_gateway_listener_status_has_correct_observed_generation() {
+        // Create a Gateway with generation = 1
+        let gc = create_accepted_gateway_class("multiway");
+        let mut gw = create_gateway("default", "my-gateway", "multiway");
+        gw.metadata.generation = Some(1);
+
+        let fixed_time = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        let snapshot = WorldSnapshotBuilder::new()
+            .at_time(fixed_time)
+            .with_gateway_class(gc)
+            .with_gateway(gw)
+            .build();
+        let config = default_config();
+
+        let result = reconcile_gateway(&snapshot, &config, "default", "my-gateway");
+
+        let status = result
+            .gateway_status_update("default", "my-gateway")
+            .expect("Expected status update for Gateway");
+        let listeners = status.listeners.as_ref().unwrap();
+
+        // Each listener status should also have correct observedGeneration
+        for listener in listeners {
+            for condition in &listener.conditions {
+                assert_eq!(
+                    condition.observed_generation,
+                    Some(1),
+                    "Gateway listener '{}' condition '{}' should have observedGeneration=1, \
+                     but got {:?}. All conditions must track the resource generation.",
+                    listener.name,
+                    condition.type_,
+                    condition.observed_generation
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_gateway_class_status_requires_non_none_generation() {
+        // BUG REPRODUCTION: When metadata.generation is None, the observedGeneration
+        // will be None. When serialized to JSON and sent to Kubernetes, this may
+        // result in observedGeneration: 0 or null, which fails conformance tests.
+        //
+        // While Kubernetes should always set generation for live resources,
+        // this test documents the expected behavior and guards against regressions.
+        let mut gc = create_gateway_class("multiway", crate::controller::config::CONTROLLER_NAME);
+        gc.metadata.generation = None; // Simulate missing generation
+
+        let fixed_time = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        let snapshot = WorldSnapshotBuilder::new()
+            .at_time(fixed_time)
+            .with_gateway_class(gc)
+            .build();
+        let config = default_config();
+
+        let result = reconcile_gateway_class(&snapshot, &config, "multiway");
+
+        let status = result.gateway_class_status_update("multiway").unwrap();
+        let conditions = status.conditions.as_ref().unwrap();
+        let accepted = conditions.iter().find(|c| c.type_ == "Accepted").unwrap();
+
+        // When generation is None, observedGeneration should also be None.
+        // This is correct behavior - the issue is that Kubernetes may interpret
+        // None as 0 during serialization/deserialization. This test documents
+        // the current behavior. A fix would be to handle None explicitly and
+        // either skip the status update or use a default value.
+        assert!(
+            accepted.observed_generation.is_none(),
+            "When metadata.generation is None, observedGeneration should be None. \
+             Got {:?}. If this becomes Some(0), there's a serialization issue.",
+            accepted.observed_generation
+        );
     }
 }

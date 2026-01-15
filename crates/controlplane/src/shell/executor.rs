@@ -51,6 +51,15 @@ impl ReconcileExecutor {
             }
         }
 
+        // Execute status updates FIRST to ensure observedGeneration is updated
+        // even if resource creation fails. This is required for Gateway API conformance.
+        for status_update in &result.status_updates {
+            if let Err(e) = self.execute_status_update(status_update).await {
+                error!(error = %e, "Failed to execute status update");
+                return Ok(Action::requeue(Duration::from_secs(5)));
+            }
+        }
+
         // Execute upserts
         for upsert in &result.upserts {
             if let Err(e) = self.execute_upsert(upsert).await {
@@ -64,14 +73,6 @@ impl ReconcileExecutor {
             if let Err(e) = self.execute_delete(delete).await {
                 error!(error = %e, "Failed to execute delete");
                 // Continue with other deletes, don't fail the whole reconciliation
-            }
-        }
-
-        // Execute status updates
-        for status_update in &result.status_updates {
-            if let Err(e) = self.execute_status_update(status_update).await {
-                error!(error = %e, "Failed to execute status update");
-                return Ok(Action::requeue(Duration::from_secs(5)));
             }
         }
 
@@ -286,7 +287,7 @@ impl ReconcileExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::result::{EventSeverity, ReconcileEvent};
+    use crate::core::result::EventSeverity;
 
     #[test]
     fn test_result_to_action_conversion() {
