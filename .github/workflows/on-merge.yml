@@ -135,9 +135,12 @@ jobs:
           # Sanitize branch name: replace / with - for valid Docker tags
           if [[ "${{ github.event_name }}" == "merge_group" ]]; then
             BRANCH=$(echo "${{ github.base_ref }}" | sed 's/\//-/g')
-            echo "branch_tag=${IMAGE}:${BRANCH}-${{ matrix.arch }}" >> $GITHUB_OUTPUT
           elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             BRANCH=$(echo "${{ github.ref_name }}" | sed 's/\//-/g')
+          fi
+
+          # Only set branch_tag if BRANCH is non-empty
+          if [[ -n "$BRANCH" ]]; then
             echo "branch_tag=${IMAGE}:${BRANCH}-${{ matrix.arch }}" >> $GITHUB_OUTPUT
           fi
 
@@ -189,14 +192,15 @@ jobs:
             "${IMAGE}:${SHA_SHORT}-amd64" \
             "${IMAGE}:${SHA_SHORT}-arm64"
 
-          # Create manifest for branch tag
+          # Determine branch name and sanitize it (replace / with - for valid Docker tags)
           if [[ "${{ github.event_name }}" == "merge_group" ]]; then
-            BRANCH="${{ github.base_ref }}"
-            docker buildx imagetools create -t "${IMAGE}:${BRANCH}" \
-              "${IMAGE}:${BRANCH}-amd64" \
-              "${IMAGE}:${BRANCH}-arm64"
+            BRANCH=$(echo "${{ github.base_ref }}" | sed 's/\//-/g')
           elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            BRANCH="${{ github.ref_name }}"
+            BRANCH=$(echo "${{ github.ref_name }}" | sed 's/\//-/g')
+          fi
+
+          # Create manifest for branch tag only if BRANCH is non-empty
+          if [[ -n "$BRANCH" ]]; then
             docker buildx imagetools create -t "${IMAGE}:${BRANCH}" \
               "${IMAGE}:${BRANCH}-amd64" \
               "${IMAGE}:${BRANCH}-arm64"
