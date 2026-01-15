@@ -9,7 +9,7 @@ use std::time::Duration;
 use gateway_crds::{Gateway, GatewayClass, HTTPRoute};
 use k8s_openapi::api::apps::v1::Deployment;
 use k8s_openapi::api::core::v1::{ConfigMap, Service, ServiceAccount};
-use kube::api::{DeleteParams, Patch, PatchParams, PostParams};
+use kube::api::{DeleteParams, Patch, PatchParams};
 use kube::runtime::controller::Action;
 use kube::{Api, Client};
 use tracing::{debug, error, info, warn};
@@ -175,7 +175,7 @@ impl ReconcileExecutor {
         Ok(())
     }
 
-    /// Upsert a Deployment
+    /// Upsert a Deployment using Server-Side Apply
     async fn upsert_deployment(&self, deployment: &Deployment) -> Result<()> {
         let namespace = deployment
             .metadata
@@ -185,100 +185,64 @@ impl ReconcileExecutor {
         let name = deployment.metadata.name.as_deref().unwrap();
         let api: Api<Deployment> = Api::namespaced(self.client.clone(), namespace);
 
-        match api.get(name).await {
-            Ok(_) => {
-                debug!(namespace, name, "Updating Deployment");
-                api.patch(
-                    name,
-                    &PatchParams::apply("multiway-controller"),
-                    &Patch::Apply(deployment),
-                )
-                .await?;
-            }
-            Err(kube::Error::Api(err)) if err.code == 404 => {
-                info!(namespace, name, "Creating Deployment");
-                api.create(&PostParams::default(), deployment).await?;
-            }
-            Err(e) => return Err(e.into()),
-        }
+        debug!(namespace, name, "Applying Deployment");
+        api.patch(
+            name,
+            &PatchParams::apply("multiway-controller").force(),
+            &Patch::Apply(deployment),
+        )
+        .await?;
 
         Ok(())
     }
 
-    /// Upsert a Service
+    /// Upsert a Service using Server-Side Apply
     async fn upsert_service(&self, service: &Service) -> Result<()> {
         let namespace = service.metadata.namespace.as_deref().unwrap_or("default");
         let name = service.metadata.name.as_deref().unwrap();
         let api: Api<Service> = Api::namespaced(self.client.clone(), namespace);
 
-        match api.get(name).await {
-            Ok(_) => {
-                debug!(namespace, name, "Updating Service");
-                api.patch(
-                    name,
-                    &PatchParams::apply("multiway-controller"),
-                    &Patch::Apply(service),
-                )
-                .await?;
-            }
-            Err(kube::Error::Api(err)) if err.code == 404 => {
-                info!(namespace, name, "Creating Service");
-                api.create(&PostParams::default(), service).await?;
-            }
-            Err(e) => return Err(e.into()),
-        }
+        debug!(namespace, name, "Applying Service");
+        api.patch(
+            name,
+            &PatchParams::apply("multiway-controller").force(),
+            &Patch::Apply(service),
+        )
+        .await?;
 
         Ok(())
     }
 
-    /// Upsert a ConfigMap
+    /// Upsert a ConfigMap using Server-Side Apply
     async fn upsert_configmap(&self, configmap: &ConfigMap) -> Result<()> {
         let namespace = configmap.metadata.namespace.as_deref().unwrap_or("default");
         let name = configmap.metadata.name.as_deref().unwrap();
         let api: Api<ConfigMap> = Api::namespaced(self.client.clone(), namespace);
 
-        match api.get(name).await {
-            Ok(_) => {
-                debug!(namespace, name, "Updating ConfigMap");
-                api.patch(
-                    name,
-                    &PatchParams::apply("multiway-controller"),
-                    &Patch::Apply(configmap),
-                )
-                .await?;
-            }
-            Err(kube::Error::Api(err)) if err.code == 404 => {
-                info!(namespace, name, "Creating ConfigMap");
-                api.create(&PostParams::default(), configmap).await?;
-            }
-            Err(e) => return Err(e.into()),
-        }
+        debug!(namespace, name, "Applying ConfigMap");
+        api.patch(
+            name,
+            &PatchParams::apply("multiway-controller").force(),
+            &Patch::Apply(configmap),
+        )
+        .await?;
 
         Ok(())
     }
 
-    /// Upsert a ServiceAccount
+    /// Upsert a ServiceAccount using Server-Side Apply
     async fn upsert_serviceaccount(&self, sa: &ServiceAccount) -> Result<()> {
         let namespace = sa.metadata.namespace.as_deref().unwrap_or("default");
         let name = sa.metadata.name.as_deref().unwrap();
         let api: Api<ServiceAccount> = Api::namespaced(self.client.clone(), namespace);
 
-        match api.get(name).await {
-            Ok(_) => {
-                debug!(namespace, name, "Updating ServiceAccount");
-                api.patch(
-                    name,
-                    &PatchParams::apply("multiway-controller"),
-                    &Patch::Apply(sa),
-                )
-                .await?;
-            }
-            Err(kube::Error::Api(err)) if err.code == 404 => {
-                info!(namespace, name, "Creating ServiceAccount");
-                api.create(&PostParams::default(), sa).await?;
-            }
-            Err(e) => return Err(e.into()),
-        }
+        debug!(namespace, name, "Applying ServiceAccount");
+        api.patch(
+            name,
+            &PatchParams::apply("multiway-controller").force(),
+            &Patch::Apply(sa),
+        )
+        .await?;
 
         Ok(())
     }
