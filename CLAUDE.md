@@ -80,6 +80,15 @@ The conformance tests are configured via environment variables in `conformance/j
 - `CONFORMANCE_PROFILES` - Optional conformance profiles to run
 - `SHOW_DEBUG` - Enable debug output (`true`/`false`)
 
+## Before Completing a Task
+
+Always validate your changes before considering a task complete:
+
+- **At minimum**: Run `cargo make fmt` to ensure code is properly formatted
+- **Preferred**: Run `cargo make` to run the full test suite (formatting, linting, build, and tests)
+
+Do not commit or mark work as done until validation passes.
+
 ## Architecture
 
 This is a Rust CLI template using Rust 2024 edition. The binary entry point is at `src/bin/main.rs`.
