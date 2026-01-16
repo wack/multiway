@@ -39,29 +39,34 @@ Each CSV file has the following columns:
 - `description`: A brief description of what the test validates
 - `implemented`: Status - `false`, `in-progress`, or `true`
 
-## Helper Scripts
+## Helper Script: next_test.sh
 
-Two helper scripts are provided to automate the test selection and enablement process:
+A Bash helper script (`next_test.sh`) is provided to automate the test selection and enablement process. This script uses modern Bash practices and [`ast-grep`](https://ast-grep.github.io/) for safe, structural code modifications.
 
-### next_test.sh (Recommended - Bash + ast-grep)
+### Why ast-grep?
 
-A Bash script that uses [`ast-grep`](https://ast-grep.github.io/) for structural code modifications. This is the recommended approach because:
-- **AST-aware**: Uses abstract syntax tree analysis, not regex
-- **Safe modifications**: Won't accidentally modify strings, comments, or other contexts
-- **Simpler**: Pure Bash for CSV processing, ast-grep for code changes
-- **Fast**: No interpreter startup overhead
+The script uses `ast-grep` for removing `t.Skip()` calls because:
+- **AST-aware**: Uses abstract syntax tree analysis instead of fragile regex patterns
+- **Safe modifications**: Won't accidentally modify strings, comments, or other non-code contexts
+- **Precise**: Understands Go syntax and code structure
+- **Reliable**: Purpose-built for code transformations
 
-**Prerequisites:**
+### Prerequisites
+
+**Required:**
 - The `GATEWAY_CONFORMANCE_SUITE` environment variable must be set to the path of your local gateway-api repository clone
 - `ast-grep` must be installed: `cargo install ast-grep-cli`
+- Standard Unix tools: bash, awk, sed, grep, tail
 
-**Usage:**
+### Usage
+
 ```bash
-# Run from anywhere
-.claude/skills/development-loop/next_test.sh
+# Run from anywhere (script auto-detects its location)
+./.claude/skills/development-loop/next_test.sh
 ```
 
-**Output:**
+### Example Output
+
 ```
 Scanning tier CSV files for next test...
 
@@ -72,30 +77,33 @@ Description: Path and header matching for routing requests...
 ======================================================================
 
 Found test file: /path/to/gateway-api/conformance/tests/httproute-matching.go
+
 Enabling test by removing t.Skip() call...
 ✓ Successfully removed t.Skip() from httproute-matching.go
 
 Next steps:
 1. Run the conformance suite to observe the test failure
-2. Diagnose the root cause
-3. Implement the fix
+2. Diagnose the root cause of the failure
+3. Implement the fix in the multiway codebase
 4. Update the CSV status to 'in-progress' or 'true' as appropriate
 ```
 
-### next_test.py (Fallback - Pure Python)
+### Script Features
 
-A self-contained Python script that requires no external dependencies beyond Python 3.6+. Use this if you don't have `ast-grep` installed.
+- **Modern Bash syntax**: Uses `set -euo pipefail` for strict error handling
+- **Extensive documentation**: Heavily commented functions explaining logic flow
+- **Readonly variables**: Immutable configuration values where appropriate
+- **Local variables**: Function-scoped variables for safety
+- **Colorized output**: Clear visual feedback using ANSI colors
+- **Modular design**: Well-organized functions with single responsibilities
 
-**Prerequisites:**
-- The `GATEWAY_CONFORMANCE_SUITE` environment variable must be set
-- Python 3.6+ must be available
+### Important Note
 
-**Usage:**
-```bash
-.claude/skills/development-loop/next_test.py
-```
-
-**Note:** While these scripts automate Steps 1-3 of the development loop, you should still manually verify the results and understand what the scripts are doing before proceeding with implementation.
+While this script automates the mechanical parts of Steps 1-3 of the development loop, you should still:
+- Understand what changes the script made to the conformance test
+- Verify the correct test file was identified
+- Manually review the conformance test code before implementing fixes
+- Confirm the test actually fails when enabled before starting implementation
 
 ## Development Loop Steps
 
