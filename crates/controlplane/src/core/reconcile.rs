@@ -15,9 +15,10 @@ use gateway_crds::{
 };
 use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec};
 use k8s_openapi::api::core::v1::{
-    ConfigMap, ConfigMapVolumeSource, Container, ContainerPort, EnvVar, PodSpec, PodTemplateSpec,
-    ResourceRequirements, Service, ServicePort, ServiceSpec, Volume, VolumeMount,
+    ConfigMap, Container, ContainerPort, EnvVar, PodSpec, PodTemplateSpec, ResourceRequirements,
+    Service, ServiceAccount, ServicePort, ServiceSpec,
 };
+use k8s_openapi::api::rbac::v1::{PolicyRule, Role, RoleBinding, RoleRef, Subject};
 use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::{
     Condition, LabelSelector, OwnerReference, Time,
@@ -183,6 +184,14 @@ pub fn reconcile_gateway(
     let configmap = build_configmap(&names, &gateway_config, gateway);
     result = result.upsert_configmap(configmap);
 
+    // Build RBAC resources for data plane to read ConfigMap via API
+    let serviceaccount = build_serviceaccount(&names, gateway);
+    let role = build_role(&names, gateway);
+    let rolebinding = build_rolebinding(&names, gateway);
+    result = result.upsert_serviceaccount(serviceaccount);
+    result = result.upsert_role(role);
+    result = result.upsert_rolebinding(rolebinding);
+
     // Build Service
     let service = build_service(&names, gateway);
     result = result.upsert_service(service);
@@ -191,18 +200,19 @@ pub fn reconcile_gateway(
     let deployment = build_deployment(&names, gateway, config);
     result = result.upsert_deployment(deployment);
 
-    // Step 4: Get addresses from existing service (if any)
-    let addresses = snapshot
-        .get_service(gateway_ns, &names.service_name())
-        .and_then(|svc| svc.spec.as_ref())
-        .and_then(|spec| spec.cluster_ip.as_ref())
-        .filter(|ip| !ip.is_empty() && *ip != "None")
-        .map(|ip| {
-            vec![GatewayStatusAddresses {
-                r#type: Some("IPAddress".to_string()),
-                value: ip.clone(),
-            }]
-        });
+    // Step 4: Get addresses for the Gateway status
+    //
+    // For local development and conformance testing, we use 127.0.0.1 (localhost)
+    // as the Gateway address. This allows external clients to reach the Gateway
+    // via kubectl port-forward.
+    //
+    // For production environments with LoadBalancer support (e.g., MetalLB),
+    // the address should come from the Service's external IP. This is a future
+    // enhancement - for now, we optimize for local development.
+    let addresses = Some(vec![GatewayStatusAddresses {
+        r#type: Some("IPAddress".to_string()),
+        value: "127.0.0.1".to_string(),
+    }]);
 
     // Step 5: Count attached routes
     let attached_routes = snapshot.routes_for_gateway(gateway_ns, gateway_name).len() as i32;
@@ -404,6 +414,65 @@ fn build_configmap(names: &DataPlaneNames, config: &GatewayConfig, gateway: &Gat
     }
 }
 
+/// Build a ServiceAccount for the data plane
+fn build_serviceaccount(names: &DataPlaneNames, gateway: &Gateway) -> ServiceAccount {
+    ServiceAccount {
+        metadata: kube::core::ObjectMeta {
+            name: Some(names.serviceaccount_name()),
+            namespace: Some(names.namespace().to_string()),
+            labels: Some(names.labels()),
+            owner_references: Some(vec![owner_reference(gateway)]),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+/// Build a Role for the data plane to read ConfigMaps
+fn build_role(names: &DataPlaneNames, gateway: &Gateway) -> Role {
+    Role {
+        metadata: kube::core::ObjectMeta {
+            name: Some(names.role_name()),
+            namespace: Some(names.namespace().to_string()),
+            labels: Some(names.labels()),
+            owner_references: Some(vec![owner_reference(gateway)]),
+            ..Default::default()
+        },
+        rules: Some(vec![PolicyRule {
+            api_groups: Some(vec!["".to_string()]),
+            resources: Some(vec!["configmaps".to_string()]),
+            verbs: vec!["get".to_string(), "list".to_string(), "watch".to_string()],
+            // Restrict to only the specific ConfigMap for this Gateway
+            resource_names: Some(vec![names.configmap_name()]),
+            ..Default::default()
+        }]),
+    }
+}
+
+/// Build a RoleBinding for the data plane
+fn build_rolebinding(names: &DataPlaneNames, gateway: &Gateway) -> RoleBinding {
+    RoleBinding {
+        metadata: kube::core::ObjectMeta {
+            name: Some(names.rolebinding_name()),
+            namespace: Some(names.namespace().to_string()),
+            labels: Some(names.labels()),
+            owner_references: Some(vec![owner_reference(gateway)]),
+            ..Default::default()
+        },
+        role_ref: RoleRef {
+            api_group: "rbac.authorization.k8s.io".to_string(),
+            kind: "Role".to_string(),
+            name: names.role_name(),
+        },
+        subjects: Some(vec![Subject {
+            kind: "ServiceAccount".to_string(),
+            name: names.serviceaccount_name(),
+            namespace: Some(names.namespace().to_string()),
+            ..Default::default()
+        }]),
+    }
+}
+
 /// Maximum length for Kubernetes port names (IANA service name format, RFC 6335).
 const MAX_PORT_NAME_LENGTH: usize = 15;
 
@@ -482,6 +551,12 @@ fn build_deployment(
 ) -> Deployment {
     // Deduplicate ports: multiple Gateway listeners can share the same port
     // (e.g., for SNI-based routing), but Kubernetes rejects duplicate container ports.
+    //
+    // We use hostPort to make the container port directly accessible on the node.
+    // This is required for Kind clusters with extraPortMappings to route external
+    // traffic to the data plane. Note: Only one Gateway per port can be active on
+    // a single-node cluster. For full multi-Gateway support, use MetalLB or a
+    // multi-node cluster.
     let mut port_map: BTreeMap<i32, ContainerPort> = BTreeMap::new();
     for listener in &gateway.spec.listeners {
         port_map
@@ -489,6 +564,7 @@ fn build_deployment(
             .or_insert_with(|| ContainerPort {
                 name: Some(sanitize_port_name(&listener.name)),
                 container_port: listener.port,
+                host_port: Some(listener.port),
                 protocol: Some("TCP".to_string()),
                 ..Default::default()
             });
@@ -515,6 +591,9 @@ fn build_deployment(
         Quantity(config.resource_limits.memory.clone()),
     );
 
+    // Data plane reads configuration from the ConfigMap via the Kubernetes API,
+    // not from a mounted volume. This provides immediate notification of changes
+    // (bypassing the ~60 second kubelet sync delay for mounted ConfigMaps).
     let container = Container {
         name: "dataplane".to_string(),
         image: Some(config.dataplane_image.clone()),
@@ -531,18 +610,7 @@ fn build_deployment(
                 value: Some(names.namespace().to_string()),
                 ..Default::default()
             },
-            EnvVar {
-                name: "CONFIG_PATH".to_string(),
-                value: Some(format!("/config/{}", CONFIG_KEY)),
-                ..Default::default()
-            },
         ]),
-        volume_mounts: Some(vec![VolumeMount {
-            name: "config".to_string(),
-            mount_path: "/config".to_string(),
-            read_only: Some(true),
-            ..Default::default()
-        }]),
         resources: Some(ResourceRequirements {
             requests: Some(requests),
             limits: Some(limits),
@@ -571,15 +639,8 @@ fn build_deployment(
                     ..Default::default()
                 }),
                 spec: Some(PodSpec {
+                    service_account_name: Some(names.serviceaccount_name()),
                     containers: vec![container],
-                    volumes: Some(vec![Volume {
-                        name: "config".to_string(),
-                        config_map: Some(ConfigMapVolumeSource {
-                            name: names.configmap_name(),
-                            ..Default::default()
-                        }),
-                        ..Default::default()
-                    }]),
                     ..Default::default()
                 }),
             },

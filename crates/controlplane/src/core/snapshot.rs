@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use gateway_crds::{Gateway, GatewayClass, HTTPRoute, ReferenceGrant};
 use k8s_openapi::api::apps::v1::Deployment;
-use k8s_openapi::api::core::v1::{ConfigMap, Secret, Service};
+use k8s_openapi::api::core::v1::{ConfigMap, Node, Secret, Service};
 use kube::ResourceExt;
 
 /// A point-in-time snapshot of relevant cluster state.
@@ -53,6 +53,10 @@ pub struct WorldSnapshot {
     /// ReferenceGrants for cross-namespace references
     /// Key: (namespace, name)
     pub reference_grants: BTreeMap<(String, String), ReferenceGrant>,
+
+    /// Cluster nodes (for determining external addresses)
+    /// Key: node name
+    pub nodes: BTreeMap<String, Node>,
 }
 
 impl WorldSnapshot {
@@ -68,6 +72,7 @@ impl WorldSnapshot {
             deployments: BTreeMap::new(),
             secrets: BTreeMap::new(),
             reference_grants: BTreeMap::new(),
+            nodes: BTreeMap::new(),
         }
     }
 
@@ -203,6 +208,41 @@ impl WorldSnapshot {
             "Service",
         )
     }
+
+    /// Get the first available node internal IP address.
+    ///
+    /// This is used to determine the external address for Gateways when using
+    /// NodePort services (e.g., in Kind clusters without LoadBalancer support).
+    /// Returns the first InternalIP address found from any Ready node.
+    pub fn get_node_internal_ip(&self) -> Option<String> {
+        for node in self.nodes.values() {
+            // Check if node is Ready
+            let is_ready = node
+                .status
+                .as_ref()
+                .and_then(|s| s.conditions.as_ref())
+                .map(|conditions| {
+                    conditions
+                        .iter()
+                        .any(|c| c.type_ == "Ready" && c.status == "True")
+                })
+                .unwrap_or(false);
+
+            if !is_ready {
+                continue;
+            }
+
+            // Get InternalIP address
+            if let Some(addresses) = node.status.as_ref().and_then(|s| s.addresses.as_ref()) {
+                for addr in addresses {
+                    if addr.type_ == "InternalIP" {
+                        return Some(addr.address.clone());
+                    }
+                }
+            }
+        }
+        None
+    }
 }
 
 /// Builder for constructing test snapshots.
@@ -298,6 +338,13 @@ impl WorldSnapshotBuilder {
         let ns = grant.namespace().unwrap_or_default();
         let name = grant.name_any();
         self.snapshot.reference_grants.insert((ns, name), grant);
+        self
+    }
+
+    /// Add a Node to the snapshot
+    pub fn with_node(mut self, node: Node) -> Self {
+        let name = node.name_any();
+        self.snapshot.nodes.insert(name, node);
         self
     }
 

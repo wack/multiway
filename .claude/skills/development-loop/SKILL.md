@@ -1,7 +1,6 @@
 ---
 name: development-loop
 description: Red-green-refactor development loop for implementing Gateway API conformance tests. Use this skill when working on implementing new conformance tests for the multiway project. It guides the agent through selecting the next test to implement based on priority tiers, running the conformance suite, diagnosing failures, and implementing fixes.
-allowed-tools: Bash(cargo:*) Bash(kubectl:*) Bash(kind:*) Bash(docker:*) Bash(cd:*) Bash(ls:*) Bash(make:*) Bash(direnv:*) Read Edit Write Grep Glob Task
 ---
 
 # Development Loop for Gateway API Conformance Implementation

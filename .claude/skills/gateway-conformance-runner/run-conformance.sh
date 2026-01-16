@@ -662,6 +662,15 @@ deploy_gateway_components() {
 #######################################
 # Runs the Gateway API conformance test suite from the local repository.
 # Test failures are expected output and do not cause the script to fail.
+#
+# Note: The Kind cluster must be configured with extraPortMappings (ports 80/443)
+# and the gateway controller uses hostPort to expose the data plane directly on
+# the node. This allows external traffic to reach the Gateway at 127.0.0.1:80.
+#
+# Limitation: Only one Gateway per port can be active on a single-node cluster.
+# The conformance test setup creates multiple Gateways, so some may fail to
+# schedule due to hostPort conflicts. For full multi-Gateway support, use
+# MetalLB or a multi-node cluster.
 #######################################
 run_conformance_tests() {
     info "=== Phase: Run Conformance Tests ==="

@@ -114,10 +114,10 @@ args = [
 ]
 
 [tasks.kind-create]
-description = "Create a kind Kubernetes cluster"
+description = "Create a kind Kubernetes cluster with port mappings for Gateway testing"
 category = "Kubernetes"
 command = "kind"
-args = ["create", "cluster", "--name", "multiway-local"]
+args = ["create", "cluster", "--name", "multiway-local", "--config", "kind-config.yaml"]
 
 [tasks.kind-delete]
 description = "Delete the kind Kubernetes cluster"

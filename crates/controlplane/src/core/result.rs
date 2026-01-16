@@ -9,6 +9,7 @@ use std::time::Duration;
 use gateway_crds::{GatewayClassStatus, GatewayStatus, HttpRouteStatus};
 use k8s_openapi::api::apps::v1::Deployment;
 use k8s_openapi::api::core::v1::{ConfigMap, Service, ServiceAccount};
+use k8s_openapi::api::rbac::v1::{Role, RoleBinding};
 
 /// The result of a reconciliation - describes effects to perform.
 ///
@@ -73,6 +74,18 @@ impl ReconcileResult {
     /// Add a ServiceAccount to create or update
     pub fn upsert_serviceaccount(mut self, sa: ServiceAccount) -> Self {
         self.upserts.push(ResourceUpsert::ServiceAccount(sa));
+        self
+    }
+
+    /// Add a Role to create or update
+    pub fn upsert_role(mut self, role: Role) -> Self {
+        self.upserts.push(ResourceUpsert::Role(role));
+        self
+    }
+
+    /// Add a RoleBinding to create or update
+    pub fn upsert_rolebinding(mut self, rb: RoleBinding) -> Self {
+        self.upserts.push(ResourceUpsert::RoleBinding(rb));
         self
     }
 
@@ -252,6 +265,10 @@ pub enum ResourceUpsert {
     ConfigMap(ConfigMap),
     /// Create or update a ServiceAccount
     ServiceAccount(ServiceAccount),
+    /// Create or update a Role
+    Role(Role),
+    /// Create or update a RoleBinding
+    RoleBinding(RoleBinding),
 }
 
 /// A resource to delete

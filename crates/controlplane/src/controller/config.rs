@@ -484,6 +484,16 @@ impl DataPlaneNames {
         format!("multiway-dp-{}", self.gateway_name)
     }
 
+    /// Get the Role name for this gateway's data plane
+    pub fn role_name(&self) -> String {
+        format!("multiway-dp-{}", self.gateway_name)
+    }
+
+    /// Get the RoleBinding name for this gateway's data plane
+    pub fn rolebinding_name(&self) -> String {
+        format!("multiway-dp-{}", self.gateway_name)
+    }
+
     /// Get the namespace for the data plane
     pub fn namespace(&self) -> &str {
         &self.gateway_namespace
