@@ -1,6 +1,11 @@
 [config]
 default_to_workspace = false
 
+extend = [
+  { path = "Makefile.kind.toml" },
+  { path = "Makefile.docker.toml" },
+]
+
 [env]
 CARGO_MAKE_CLIPPY_ARGS = "-- --no-deps"
 CARGO_MAKE_COVERAGE_PROVIDER = "llvm-cov"
@@ -112,30 +117,6 @@ args = [
   "--workspace",
   "@@split(CARGO_MAKE_CARGO_BUILD_TEST_FLAGS, )",
 ]
-
-[tasks.kind-create]
-description = "Create a kind Kubernetes cluster"
-category = "Kubernetes"
-command = "kind"
-args = ["create", "cluster", "--name", "multiway-local"]
-
-[tasks.kind-delete]
-description = "Delete the kind Kubernetes cluster"
-category = "Kubernetes"
-command = "kind"
-args = ["delete", "cluster", "--name", "multiway-local"]
-
-[tasks.kind-list]
-description = "List kind clusters"
-category = "Kubernetes"
-command = "kind"
-args = ["get", "clusters"]
-
-[tasks.kind-use]
-description = "Set kubectl context to the multiway-local cluster"
-category = "Kubernetes"
-command = "kubectl"
-args = ["config", "use-context", "kind-multiway-local"]
 
 [tasks.gateway-api-refresh]
 description = "Download and split the Gateway API CRDs"
@@ -329,137 +310,3 @@ kubectl logs -n gateway-conformance-infra job/gateway-api-conformance --tail=-1
 description = "Build, load, and run conformance tests (full workflow)"
 category = "Conformance"
 dependencies = ["conformance-build", "conformance-load", "conformance-run"]
-
-# Docker Build Tasks
-# These tasks build the control plane and data plane container images.
-
-[tasks.docker-setup-buildx]
-description = "Create and use a buildx builder for multi-platform builds"
-category = "Docker"
-script_runner = "@shell"
-script = '''
-# Check if multiway-builder exists, create if not
-if ! docker buildx inspect multiway-builder >/dev/null 2>&1; then
-  echo "Creating buildx builder: multiway-builder"
-  docker buildx create --name multiway-builder --use
-else
-  echo "Using existing buildx builder: multiway-builder"
-  docker buildx use multiway-builder
-fi
-docker buildx inspect --bootstrap
-'''
-
-[tasks.docker-build-controlplane]
-description = "Build control plane image for current platform"
-category = "Docker"
-script_runner = "@shell"
-script = '''
-docker build \
-  --target controlplane \
-  -t multiway-controlplane:latest \
-  -f Dockerfile \
-  .
-'''
-
-[tasks.docker-build-dataplane]
-description = "Build data plane image for current platform"
-category = "Docker"
-script_runner = "@shell"
-script = '''
-docker build \
-  --target dataplane \
-  -t multiway-dataplane:latest \
-  -f Dockerfile \
-  .
-'''
-
-[tasks.docker-build-all]
-description = "Build both control plane and data plane for current platform"
-category = "Docker"
-dependencies = ["docker-build-controlplane", "docker-build-dataplane"]
-
-[tasks.docker-build-controlplane-cross]
-description = "Build control plane image for both amd64 and arm64"
-category = "Docker"
-dependencies = ["docker-setup-buildx"]
-script_runner = "@shell"
-script = '''
-echo "Building control plane for multiple platforms..."
-echo "Note: Multi-platform images cannot be loaded into local Docker."
-echo "Use docker-build-controlplane for local development or docker-build-controlplane-push to publish."
-docker buildx build \
-  --target controlplane \
-  --platform linux/amd64,linux/arm64 \
-  -t multiway-controlplane:latest \
-  -f Dockerfile \
-  .
-'''
-
-[tasks.docker-build-dataplane-cross]
-description = "Build data plane image for both amd64 and arm64"
-category = "Docker"
-dependencies = ["docker-setup-buildx"]
-script_runner = "@shell"
-script = '''
-echo "Building data plane for multiple platforms..."
-echo "Note: Multi-platform images cannot be loaded into local Docker."
-echo "Use docker-build-dataplane for local development or docker-build-dataplane-push to publish."
-docker buildx build \
-  --target dataplane \
-  --platform linux/amd64,linux/arm64 \
-  -t multiway-dataplane:latest \
-  -f Dockerfile \
-  .
-'''
-
-[tasks.docker-build-all-cross]
-description = "Build both control plane and data plane for amd64 and arm64"
-category = "Docker"
-dependencies = ["docker-build-controlplane-cross", "docker-build-dataplane-cross"]
-
-[tasks.docker-build-controlplane-push]
-description = "Build and push control plane image for both amd64 and arm64"
-category = "Docker"
-dependencies = ["docker-setup-buildx"]
-script_runner = "@shell"
-script = '''
-if [ -z "$DOCKER_REGISTRY" ]; then
-  echo "Error: DOCKER_REGISTRY environment variable not set"
-  echo "Example: export DOCKER_REGISTRY=ghcr.io/myorg"
-  exit 1
-fi
-
-docker buildx build \
-  --target controlplane \
-  --platform linux/amd64,linux/arm64 \
-  -t ${DOCKER_REGISTRY}/multiway-controlplane:latest \
-  -f Dockerfile \
-  --push \
-  .
-'''
-
-[tasks.docker-build-dataplane-push]
-description = "Build and push data plane image for both amd64 and arm64"
-category = "Docker"
-dependencies = ["docker-setup-buildx"]
-script_runner = "@shell"
-script = '''
-if [ -z "$DOCKER_REGISTRY" ]; then
-  echo "Error: DOCKER_REGISTRY environment variable not set"
-  echo "Example: export DOCKER_REGISTRY=ghcr.io/myorg"
-  exit 1
-fi
-
-docker buildx build \
-  --target dataplane \
-  --platform linux/amd64,linux/arm64 \
-  -t ${DOCKER_REGISTRY}/multiway-dataplane:latest \
-  -f Dockerfile \
-  --push \
-  .
-'''
-
-[tasks.docker-build-all-push]
-description = "Build and push both images for amd64 and arm64"
-category = "Docker"
-dependencies = ["docker-build-controlplane-push", "docker-build-dataplane-push"]
