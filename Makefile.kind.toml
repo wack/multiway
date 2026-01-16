@@ -1,0 +1,26 @@
+# Makefile.kind.toml
+# Tasks for managing Kind (Kubernetes in Docker) clusters
+
+[tasks.kind-create]
+description = "Create a kind Kubernetes cluster"
+category = "Kubernetes"
+command = "kind"
+args = ["create", "cluster", "--name", "multiway-local"]
+
+[tasks.kind-delete]
+description = "Delete the kind Kubernetes cluster"
+category = "Kubernetes"
+command = "kind"
+args = ["delete", "cluster", "--name", "multiway-local"]
+
+[tasks.kind-list]
+description = "List kind clusters"
+category = "Kubernetes"
+command = "kind"
+args = ["get", "clusters"]
+
+[tasks.kind-use]
+description = "Set kubectl context to the multiway-local cluster"
+category = "Kubernetes"
+command = "kubectl"
+args = ["config", "use-context", "kind-multiway-local"]
