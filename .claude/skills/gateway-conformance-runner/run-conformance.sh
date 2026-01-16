@@ -46,6 +46,7 @@ CLUSTER_NAME=""
 SKIP_BUILD=false
 SKIP_DEPLOY=false
 DRY_RUN=false
+USE_DEV_BUILD=false
 
 # =============================================================================
 # UTILITY FUNCTIONS
@@ -121,6 +122,7 @@ Options:
   --skip-build      Skip the Rust compilation and Docker image build steps
   --skip-deploy     Skip the gateway controller deployment step
   --cluster-name    Name of the Kind cluster (default: ${DEFAULT_CLUSTER_NAME})
+  --dev             Use development (debug) builds for faster compilation
   --dry-run         Print commands without executing them
   --help            Show this help message
 
@@ -130,6 +132,9 @@ Environment Variables:
 Examples:
   # Run full conformance test workflow
   ./scripts/run-conformance-local.sh
+
+  # Run with faster development builds (debug mode)
+  ./scripts/run-conformance-local.sh --dev
 
   # Skip building if images already exist
   ./scripts/run-conformance-local.sh --skip-build
@@ -182,6 +187,10 @@ parse_arguments() {
                 ;;
             --dry-run)
                 DRY_RUN=true
+                shift
+                ;;
+            --dev)
+                USE_DEV_BUILD=true
                 shift
                 ;;
             --help|-h)
@@ -427,11 +436,18 @@ verify_rust_compiles() {
 #######################################
 # Builds the Docker images for control plane and data plane.
 # This is a non-recoverable operation - build failures require investigation.
+# Uses debug builds when --dev flag is set for faster compilation.
 #######################################
 build_docker_images() {
     info "Building Docker images..."
 
-    if ! run_cmd cargo make docker-build-all; then
+    local build_task="docker-build-all"
+    if [[ "${USE_DEV_BUILD}" == true ]]; then
+        build_task="docker-build-all-dev"
+        info "Using development (debug) build for faster compilation"
+    fi
+
+    if ! run_cmd cargo make "${build_task}"; then
         error_exit "Docker image build failed. Please check the build output for errors."
     fi
 
@@ -719,6 +735,7 @@ main() {
     info "  Cluster name: ${CLUSTER_NAME}"
     info "  Skip build:   ${SKIP_BUILD}"
     info "  Skip deploy:  ${SKIP_DEPLOY}"
+    info "  Dev build:    ${USE_DEV_BUILD}"
     info "  Dry run:      ${DRY_RUN}"
     echo ""
 

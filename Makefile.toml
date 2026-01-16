@@ -469,3 +469,34 @@ docker buildx build \
 description = "Build and push both images for amd64 and arm64"
 category = "Docker"
 dependencies = ["docker-build-controlplane-push", "docker-build-dataplane-push"]
+
+# Development Docker Build Tasks (debug mode for faster compilation)
+
+[tasks.docker-build-controlplane-dev]
+description = "Build control plane image (debug mode) for faster local development"
+category = "Docker"
+script_runner = "@shell"
+script = '''
+docker build \
+  --target controlplane \
+  -t multiway-controlplane:latest \
+  -f Dockerfile.dev \
+  .
+'''
+
+[tasks.docker-build-dataplane-dev]
+description = "Build data plane image (debug mode) for faster local development"
+category = "Docker"
+script_runner = "@shell"
+script = '''
+docker build \
+  --target dataplane \
+  -t multiway-dataplane:latest \
+  -f Dockerfile.dev \
+  .
+'''
+
+[tasks.docker-build-all-dev]
+description = "Build both images (debug mode) for faster local development"
+category = "Docker"
+dependencies = ["docker-build-controlplane-dev", "docker-build-dataplane-dev"]
