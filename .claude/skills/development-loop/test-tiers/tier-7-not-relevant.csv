@@ -1,0 +1,17 @@
+test_name,description,implemented
+GRPCExactMethodMatching,gRPC method-based routing with exact service/method matching.,false
+GRPCRouteHeaderMatching,gRPC route header matching for gRPC metadata routing.,false
+GRPCRouteListenerHostnameMatching,gRPC hostname matching for multi-tenant gRPC services.,false
+GRPCRouteNamedRule,Named gRPC route rules for observability.,false
+GRPCRouteWeight,gRPC traffic weighting for load balancing gRPC services.,false
+TLSRouteSimpleSameNamespace,TLS passthrough routing based on SNI without termination.,false
+TLSRouteInvalidReferenceGrant,TLS route reference grant validation.,false
+UDPRoute,UDP protocol routing for non-HTTP traffic.,false
+HTTPRouteBackendProtocolWebSocket,WebSocket protocol support and upgrade handling.,false
+HTTPRouteBackendProtocolH2C,HTTP/2 Cleartext (h2c) backend protocol support.,false
+BackendTLSPolicy,TLS configuration for gateway-to-backend connections (mTLS).,false
+BackendTLSPolicyConflictResolution,Handling conflicting TLS policies on same backend.,false
+BackendTLSPolicyInvalidCACertificateRef,Invalid CA certificate reference handling.,false
+BackendTLSPolicyInvalidKind,Invalid backend reference kind rejection in TLS policy.,false
+BackendTLSPolicyObservedGenerationBump,TLS policy status generation tracking.,false
+BackendTLSPolicySANValidation,SubjectAltName validation in backend TLS certificates.,false

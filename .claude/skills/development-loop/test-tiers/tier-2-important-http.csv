@@ -1,0 +1,11 @@
+test_name,description,implemented
+HTTPRouteHeaderMatching,Header-based routing rules enabling request filtering and routing based on HTTP headers.,false
+HTTPRouteMethodMatching,HTTP method-based routing (GET/POST/PUT/DELETE etc) for REST API routing.,false
+HTTPRouteQueryParamMatching,Query parameter-based routing for feature flags and conditional routing.,false
+HTTPRouteRequestHeaderModifier,Adding/removing/replacing request headers before forwarding to backends.,false
+HTTPRouteResponseHeaderModifier,Response header modification for security headers and CORS.,false
+HTTPRouteRewritePath,Path rewriting and prefix stripping for backend URL compatibility.,false
+HTTPRouteRewriteHost,Host header rewriting for multi-domain backend support.,false
+HTTPRouteHostnameIntersection,Hostname matching with wildcard and specific hostname handling and precedence.,false
+HTTPRouteMatchingAcrossRoutes,Routing rules across multiple HTTPRoutes on same gateway verifying rule precedence.,false
+HTTPRoutePathMatchOrder,Correct matching order for path-based rules ensuring predictable routing behavior.,false

@@ -289,14 +289,48 @@ fn build_gateway_status_with_routes(
                 name: l.name.clone(),
                 attached_routes,
                 supported_kinds,
-                conditions: vec![Condition {
-                    type_: "Accepted".to_string(),
-                    status: status_value.to_string(),
-                    observed_generation: gateway.metadata.generation,
-                    last_transition_time: time.clone(),
-                    reason: reason.to_string(),
-                    message: message.to_string(),
-                }],
+                conditions: vec![
+                    Condition {
+                        type_: "Accepted".to_string(),
+                        status: status_value.to_string(),
+                        observed_generation: gateway.metadata.generation,
+                        last_transition_time: time.clone(),
+                        reason: reason.to_string(),
+                        message: message.to_string(),
+                    },
+                    Condition {
+                        type_: "ResolvedRefs".to_string(),
+                        status: status_value.to_string(),
+                        observed_generation: gateway.metadata.generation,
+                        last_transition_time: time.clone(),
+                        reason: if accepted {
+                            "ResolvedRefs".to_string()
+                        } else {
+                            reason.to_string()
+                        },
+                        message: if accepted {
+                            "All references resolved".to_string()
+                        } else {
+                            message.to_string()
+                        },
+                    },
+                    Condition {
+                        type_: "Programmed".to_string(),
+                        status: status_value.to_string(),
+                        observed_generation: gateway.metadata.generation,
+                        last_transition_time: time.clone(),
+                        reason: if accepted {
+                            "Programmed".to_string()
+                        } else {
+                            "Invalid".to_string()
+                        },
+                        message: if accepted {
+                            "Listener is programmed".to_string()
+                        } else {
+                            message.to_string()
+                        },
+                    },
+                ],
             }
         })
         .collect();
@@ -364,7 +398,9 @@ fn build_configmap(names: &DataPlaneNames, config: &GatewayConfig, gateway: &Gat
             ..Default::default()
         },
         data: Some(data),
-        ..Default::default()
+        // Explicitly set immutable to None to avoid SSA conflicts with unmanaged fields
+        immutable: None,
+        binary_data: None,
     }
 }
 
@@ -608,6 +644,7 @@ pub fn reconcile_httproute(
             validation.accepted,
             validation.reason,
             &validation.message,
+            httproute.metadata.generation,
         );
         parent_statuses.push(parent_status);
 
@@ -641,6 +678,7 @@ fn build_parent_status(
     accepted: bool,
     reason: &str,
     message: &str,
+    generation: Option<i64>,
 ) -> HttpRouteStatusParents {
     let time = Time(now);
     let status_value = if accepted { "True" } else { "False" };
@@ -659,7 +697,7 @@ fn build_parent_status(
             Condition {
                 type_: "Accepted".to_string(),
                 status: status_value.to_string(),
-                observed_generation: None,
+                observed_generation: generation,
                 last_transition_time: time.clone(),
                 reason: reason.to_string(),
                 message: message.to_string(),
@@ -667,7 +705,7 @@ fn build_parent_status(
             Condition {
                 type_: "ResolvedRefs".to_string(),
                 status: status_value.to_string(),
-                observed_generation: None,
+                observed_generation: generation,
                 last_transition_time: time,
                 reason: if accepted { "ResolvedRefs" } else { reason }.to_string(),
                 message: message.to_string(),
