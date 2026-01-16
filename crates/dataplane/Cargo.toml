@@ -31,8 +31,12 @@ anyhow = "1.0"
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
-# Configuration watching
-notify = "7.0"
+# Kubernetes client for watching ConfigMap changes via API
+# This provides immediate notification of ConfigMap updates, bypassing
+# the ~60 second kubelet sync delay for mounted ConfigMaps.
+kube.workspace = true
+k8s-openapi.workspace = true
+futures = "0.3"
 
 # HTTP types
 http = "1.0"

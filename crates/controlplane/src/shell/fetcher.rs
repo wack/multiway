@@ -5,7 +5,7 @@
 
 use gateway_crds::{Gateway, GatewayClass, HTTPRoute, ReferenceGrant};
 use k8s_openapi::api::apps::v1::Deployment;
-use k8s_openapi::api::core::v1::{ConfigMap, Service};
+use k8s_openapi::api::core::v1::{ConfigMap, Node, Service};
 use k8s_openapi::chrono::Utc;
 use kube::api::ListParams;
 use kube::{Api, Client, ResourceExt};
@@ -85,6 +85,9 @@ impl SnapshotFetcher {
         // Fetch existing managed resources
         let names = DataPlaneNames::new(namespace, name);
         builder = self.fetch_managed_resources(&mut builder, &names).await?;
+
+        // Fetch nodes (for determining external address when using NodePort/hostPort)
+        builder = self.fetch_nodes(&mut builder).await?;
 
         Ok(builder.build())
     }
@@ -373,6 +376,32 @@ impl SnapshotFetcher {
 
             if is_relevant {
                 result = result.with_reference_grant(grant);
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Fetch cluster nodes (for determining external addresses)
+    ///
+    /// This is used to get the node IP address for Gateway status when using
+    /// NodePort services or hostPort (e.g., in Kind clusters without LoadBalancer support).
+    async fn fetch_nodes(
+        &self,
+        builder: &mut WorldSnapshotBuilder,
+    ) -> Result<WorldSnapshotBuilder> {
+        let mut result = std::mem::take(builder);
+
+        let node_api: Api<Node> = Api::all(self.client.clone());
+        match node_api.list(&ListParams::default()).await {
+            Ok(nodes) => {
+                for node in nodes {
+                    result = result.with_node(node);
+                }
+            }
+            Err(e) => {
+                // Node access might be restricted by RBAC, log but don't fail
+                warn!(error = %e, "Unable to fetch nodes - Gateway addresses may use ClusterIP instead of node IP");
             }
         }
 

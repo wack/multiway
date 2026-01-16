@@ -34,7 +34,22 @@ rules:
     resources:
       - configmaps
       - services
+      - serviceaccounts
       - namespaces
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  # RBAC for data plane to read ConfigMaps via API
+  - apiGroups:
+      - rbac.authorization.k8s.io
+    resources:
+      - roles
+      - rolebindings
     verbs:
       - get
       - list
@@ -64,6 +79,15 @@ rules:
     verbs:
       - create
       - patch
+  # Nodes for determining external addresses (NodePort/hostPort)
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - get
+      - list
+      - watch
   # Endpoints and EndpointSlices for backend discovery
   - apiGroups:
       - ""

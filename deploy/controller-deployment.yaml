@@ -21,7 +21,7 @@ spec:
       serviceAccountName: multiway-controller
       containers:
         - name: controller
-          image: multiway-controller:latest
+          image: multiway-controlplane:latest
           imagePullPolicy: IfNotPresent
           args:
             - controller

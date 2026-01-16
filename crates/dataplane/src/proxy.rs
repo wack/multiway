@@ -234,22 +234,48 @@ impl ProxyHttp for GatewayProxyService {
                 location.push_str(query);
             }
 
-            ctx.redirect = Some(RedirectInfo {
-                location,
-                status: redirect.status_code,
-            });
+            // Send redirect response
+            let mut resp = ResponseHeader::build(redirect.status_code, Some(2))?;
+            resp.insert_header("Location", &location)?;
+            resp.insert_header("Content-Length", "0")?;
+            session.write_response_header(Box::new(resp), true).await?;
+
             return Ok(true);
         }
 
         // Check if we have a route
         match result.route {
             None => {
-                ctx.not_found = true;
+                // Send 404 Not Found response
+                debug!(
+                    listener = %self.listener_name,
+                    path = path,
+                    "No matching route found"
+                );
+                let mut resp = ResponseHeader::build(404, Some(2))?;
+                resp.insert_header("Content-Type", "text/plain")?;
+                resp.insert_header("Content-Length", "9")?;
+                session.write_response_header(Box::new(resp), false).await?;
+                session
+                    .write_response_body(Some(bytes::Bytes::from("Not Found")), true)
+                    .await?;
                 return Ok(true);
             }
             Some(matched) => {
                 if matched.backends.is_empty() {
-                    ctx.not_found = true;
+                    // Send 503 Service Unavailable response
+                    debug!(
+                        listener = %self.listener_name,
+                        route = %matched.route_id,
+                        "Route has no backends"
+                    );
+                    let mut resp = ResponseHeader::build(503, Some(2))?;
+                    resp.insert_header("Content-Type", "text/plain")?;
+                    resp.insert_header("Content-Length", "19")?;
+                    session.write_response_header(Box::new(resp), false).await?;
+                    session
+                        .write_response_body(Some(bytes::Bytes::from("Service Unavailable")), true)
+                        .await?;
                     return Ok(true);
                 }
 
