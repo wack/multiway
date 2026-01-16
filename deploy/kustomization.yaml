@@ -12,8 +12,8 @@ resources:
   - gatewayclass.yaml
 
 images:
-  - name: multiway-controller
-    newName: multiway-controller
+  - name: multiway-controlplane
+    newName: multiway-controlplane
     newTag: latest
   - name: multiway-dataplane
     newName: multiway-dataplane
