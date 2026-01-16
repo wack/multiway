@@ -286,7 +286,7 @@ The path should point to the root of the Gateway API repository clone."
         error_exit "GATEWAY_CONFORMANCE_SUITE path does not exist: ${GATEWAY_CONFORMANCE_SUITE}
 
 Please clone the Gateway API repository:
-    git clone https://github.com/kubernetes-sigs/gateway-api.git ${GATEWAY_CONFORMANCE_SUITE}"
+    git clone https://github.com/wack/gateway-api.git ${GATEWAY_CONFORMANCE_SUITE}"
     fi
 
     # Verify the conformance directory exists within the repository
