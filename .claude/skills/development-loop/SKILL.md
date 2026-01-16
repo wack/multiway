@@ -39,26 +39,26 @@ Each CSV file has the following columns:
 - `description`: A brief description of what the test validates
 - `implemented`: Status - `false`, `in-progress`, or `true`
 
-## Helper Script: next_test.py
+## Helper Scripts
 
-A Python helper script (`next_test.py`) is provided to automate the test selection and enablement process. This script:
+Two helper scripts are provided to automate the test selection and enablement process:
 
-1. **Scans tier CSV files** in priority order (tier-1 through tier-7)
-2. **Finds the first test** with status `false` or `in-progress`
-3. **Locates the test file** in the Gateway API conformance suite repository
-4. **Removes t.Skip() calls** to enable tests with status `false`
+### next_test.sh (Recommended - Bash + ast-grep)
+
+A Bash script that uses [`ast-grep`](https://ast-grep.github.io/) for structural code modifications. This is the recommended approach because:
+- **AST-aware**: Uses abstract syntax tree analysis, not regex
+- **Safe modifications**: Won't accidentally modify strings, comments, or other contexts
+- **Simpler**: Pure Bash for CSV processing, ast-grep for code changes
+- **Fast**: No interpreter startup overhead
 
 **Prerequisites:**
 - The `GATEWAY_CONFORMANCE_SUITE` environment variable must be set to the path of your local gateway-api repository clone
-- Python 3.6+ must be available
+- `ast-grep` must be installed: `cargo install ast-grep-cli`
 
 **Usage:**
 ```bash
-# Run from the development-loop skill directory
-.claude/skills/development-loop/next_test.py
-
-# Or from anywhere
-python3 /path/to/multiway/.claude/skills/development-loop/next_test.py
+# Run from anywhere
+.claude/skills/development-loop/next_test.sh
 ```
 
 **Output:**
@@ -82,7 +82,20 @@ Next steps:
 4. Update the CSV status to 'in-progress' or 'true' as appropriate
 ```
 
-**Note:** While this script automates Steps 1-3 of the development loop, you should still manually verify the results and understand what the script is doing before proceeding with implementation.
+### next_test.py (Fallback - Pure Python)
+
+A self-contained Python script that requires no external dependencies beyond Python 3.6+. Use this if you don't have `ast-grep` installed.
+
+**Prerequisites:**
+- The `GATEWAY_CONFORMANCE_SUITE` environment variable must be set
+- Python 3.6+ must be available
+
+**Usage:**
+```bash
+.claude/skills/development-loop/next_test.py
+```
+
+**Note:** While these scripts automate Steps 1-3 of the development loop, you should still manually verify the results and understand what the scripts are doing before proceeding with implementation.
 
 ## Development Loop Steps
 
