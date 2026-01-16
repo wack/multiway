@@ -39,6 +39,51 @@ Each CSV file has the following columns:
 - `description`: A brief description of what the test validates
 - `implemented`: Status - `false`, `in-progress`, or `true`
 
+## Helper Script: next_test.py
+
+A Python helper script (`next_test.py`) is provided to automate the test selection and enablement process. This script:
+
+1. **Scans tier CSV files** in priority order (tier-1 through tier-7)
+2. **Finds the first test** with status `false` or `in-progress`
+3. **Locates the test file** in the Gateway API conformance suite repository
+4. **Removes t.Skip() calls** to enable tests with status `false`
+
+**Prerequisites:**
+- The `GATEWAY_CONFORMANCE_SUITE` environment variable must be set to the path of your local gateway-api repository clone
+- Python 3.6+ must be available
+
+**Usage:**
+```bash
+# Run from the development-loop skill directory
+.claude/skills/development-loop/next_test.py
+
+# Or from anywhere
+python3 /path/to/multiway/.claude/skills/development-loop/next_test.py
+```
+
+**Output:**
+```
+Scanning tier CSV files for next test...
+
+======================================================================
+Next Test: HTTPRouteMatching
+Status: false
+Description: Path and header matching for routing requests...
+======================================================================
+
+Found test file: /path/to/gateway-api/conformance/tests/httproute-matching.go
+Enabling test by removing t.Skip() call...
+✓ Successfully removed t.Skip() from httproute-matching.go
+
+Next steps:
+1. Run the conformance suite to observe the test failure
+2. Diagnose the root cause
+3. Implement the fix
+4. Update the CSV status to 'in-progress' or 'true' as appropriate
+```
+
+**Note:** While this script automates Steps 1-3 of the development loop, you should still manually verify the results and understand what the script is doing before proceeding with implementation.
+
 ## Development Loop Steps
 
 ### Step 1: Select the Next Test
