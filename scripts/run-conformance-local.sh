@@ -488,6 +488,77 @@ build_and_load_images() {
 # =============================================================================
 
 #######################################
+# Checks if the gateway namespace exists in the cluster.
+# Returns:
+#   0 if the namespace exists, 1 otherwise
+#######################################
+namespace_exists() {
+    local readonly ns="$1"
+    kubectl get namespace "${ns}" &>/dev/null
+}
+
+#######################################
+# Cleans up any existing gateway deployments by deleting the namespace.
+# This ensures a fresh state before deploying new components.
+# The function is idempotent - it safely handles the case where the
+# namespace doesn't exist.
+#######################################
+cleanup_existing_deployment() {
+    info "Cleaning up existing deployments in namespace '${DEFAULT_NAMESPACE}'..."
+
+    if [[ "${DRY_RUN}" == true ]]; then
+        echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} kubectl delete namespace ${DEFAULT_NAMESPACE} --ignore-not-found"
+        echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} kubectl wait --for=delete namespace/${DEFAULT_NAMESPACE} --timeout=60s"
+        success "Cleanup skipped (dry-run mode)"
+        return 0
+    fi
+
+    # Check if namespace exists before attempting deletion
+    if ! namespace_exists "${DEFAULT_NAMESPACE}"; then
+        success "Namespace '${DEFAULT_NAMESPACE}' does not exist, nothing to clean up"
+        return 0
+    fi
+
+    # Delete the namespace (this removes all resources within it)
+    info "Deleting namespace '${DEFAULT_NAMESPACE}' and all its resources..."
+    if ! kubectl delete namespace "${DEFAULT_NAMESPACE}" --ignore-not-found; then
+        error_exit "Failed to delete namespace '${DEFAULT_NAMESPACE}'"
+    fi
+
+    # Wait for the namespace to be fully deleted
+    # This is important because Kubernetes namespace deletion is asynchronous
+    info "Waiting for namespace deletion to complete..."
+    if ! kubectl wait --for=delete namespace/"${DEFAULT_NAMESPACE}" --timeout=60s 2>/dev/null; then
+        # The wait command may fail if the namespace is already gone, which is fine
+        if namespace_exists "${DEFAULT_NAMESPACE}"; then
+            error_exit "Namespace '${DEFAULT_NAMESPACE}' was not deleted within timeout"
+        fi
+    fi
+
+    success "Existing deployments cleaned up"
+}
+
+#######################################
+# Creates a fresh namespace for the gateway components.
+# This should be called after cleanup_existing_deployment.
+#######################################
+create_fresh_namespace() {
+    info "Creating fresh namespace '${DEFAULT_NAMESPACE}'..."
+
+    if [[ "${DRY_RUN}" == true ]]; then
+        echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} kubectl create namespace ${DEFAULT_NAMESPACE}"
+        success "Namespace creation skipped (dry-run mode)"
+        return 0
+    fi
+
+    if ! kubectl create namespace "${DEFAULT_NAMESPACE}"; then
+        error_exit "Failed to create namespace '${DEFAULT_NAMESPACE}'"
+    fi
+
+    success "Namespace '${DEFAULT_NAMESPACE}' created"
+}
+
+#######################################
 # Installs or updates the Gateway API CRDs in the cluster.
 # This is an idempotent operation - running it multiple times is safe.
 #######################################
@@ -503,17 +574,10 @@ install_gateway_api_crds() {
 
 #######################################
 # Deploys the gateway controller to the cluster.
-# This is an idempotent operation - redeploying an existing controller is safe.
+# Assumes the namespace has already been created by create_fresh_namespace().
 #######################################
 deploy_gateway_controller() {
     info "Deploying gateway controller..."
-
-    # Create the namespace if it doesn't exist (idempotent)
-    if [[ "${DRY_RUN}" == true ]]; then
-        echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} kubectl create namespace ${DEFAULT_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -"
-    else
-        kubectl create namespace "${DEFAULT_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
-    fi
 
     # Deploy the controller using cargo make
     if ! run_cmd cargo make deploy; then
@@ -564,6 +628,13 @@ Please check the pod logs for errors:
 #######################################
 # Orchestrates the gateway component deployment phase.
 # Can be skipped with --skip-deploy flag for faster iteration.
+#
+# Steps:
+#   1. Clean up any existing deployments (delete namespace)
+#   2. Install Gateway API CRDs (cluster-scoped, not affected by namespace deletion)
+#   3. Create fresh namespace
+#   4. Deploy gateway controller
+#   5. Wait for controller pods to be ready
 #######################################
 deploy_gateway_components() {
     info "=== Phase: Deploy Gateway Components ==="
@@ -574,7 +645,9 @@ deploy_gateway_components() {
         return 0
     fi
 
+    cleanup_existing_deployment
     install_gateway_api_crds
+    create_fresh_namespace
     deploy_gateway_controller
     wait_for_controller_ready
 
