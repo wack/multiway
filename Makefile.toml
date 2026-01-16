@@ -215,6 +215,12 @@ script = '''
 kubectl apply --server-side -f .crds/v${GATEWAY_API_VERSION}/
 '''
 
+[tasks.deploy]
+description = "Deploy the gateway controller to the cluster"
+category = "Kubernetes"
+command = "kubectl"
+args = ["apply", "-k", "deploy/"]
+
 [tasks.gen-crds]
 description = "Generate CRDS from YAML"
 category = "Development"
