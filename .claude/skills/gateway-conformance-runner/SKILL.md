@@ -51,8 +51,8 @@ Use the automated script located at `.claude/skills/gateway-conformance-runner/r
 The script automates the conformance testing workflow (cluster is managed separately):
 
 1. **Prerequisites Check**: Verifies Docker and kubectl are available, cluster is accessible
-2. **Environment Verification**: Checks that `GATEWAY_CONFORMANCE_SUITE` and `DO_REGISTRY` environment variables are set
-3. **Build & Push**: Compiles the Rust project, builds Docker images, and pushes them to DigitalOcean Container Registry
+2. **Environment Verification**: Checks that `GATEWAY_CONFORMANCE_SUITE` and `DOCKER_REGISTRY` environment variables are set
+3. **Build & Push**: Compiles the Rust project, builds Docker images, and pushes them to the container registry
 4. **Deploy**: Cleans up any existing deployments, installs Gateway API CRDs, creates a fresh namespace, deploys the gateway controller, and waits for pods to be ready
 5. **Test Execution**: Runs the conformance tests from the local Gateway API repository
 
@@ -112,7 +112,7 @@ you may wish to invoke to get conformance testing back on track.
 If the script fails, consider these responsibilities:
 
 1. **Cluster Management**: The `cluster-up.sh` and `cluster-down.sh` scripts handle cluster lifecycle
-2. **Build Pipeline**: Build Docker images for the gateway controller and ensure they're properly pushed to DigitalOcean Container Registry
+2. **Build Pipeline**: Build Docker images for the gateway controller and ensure they're properly pushed to the container registry
 3. **Deployment**: Deploy the gateway controller and all necessary CRDs following the project's established patterns
 4. **Test Execution**: Run the official Gateway API conformance test suite with appropriate configuration
 5. **Results Analysis**: Retrieve and interpret test logs, identifying failures and their root causes
