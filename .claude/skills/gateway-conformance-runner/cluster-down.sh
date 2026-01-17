@@ -5,11 +5,14 @@
 # Destroys the DigitalOcean Kubernetes cluster and cleans up the kubectl context.
 # This script is designed to be run when the conformance testing session is complete.
 #
+# The cluster name defaults to a sanitized version of the current git branch,
+# prefixed with "mw-" (e.g., branch "feature/my-test" becomes "mw-feature-my-test").
+#
 # Usage:
 #   ./cluster-down.sh [OPTIONS]
 #
 # Options:
-#   --cluster-name NAME   Name of the DigitalOcean cluster (default: multiway-local)
+#   --cluster-name NAME   Name of the DigitalOcean cluster (default: derived from git branch)
 #   --dry-run             Print commands without executing them
 #   --help                Show this help message
 #
@@ -20,7 +23,8 @@ set -euo pipefail
 # CONFIGURATION
 # =============================================================================
 
-readonly DEFAULT_CLUSTER_NAME="multiway-local"
+readonly CLUSTER_NAME_PREFIX="mw"
+readonly MAX_CLUSTER_NAME_LENGTH=63
 
 # Color codes for output formatting
 readonly COLOR_RED='\033[0;31m'
@@ -98,24 +102,81 @@ run_cmd() {
 }
 
 #######################################
+# Sanitizes a string for use as a DigitalOcean cluster name.
+# - Converts to lowercase
+# - Replaces non-alphanumeric characters with hyphens
+# - Removes leading/trailing hyphens
+# - Collapses multiple consecutive hyphens
+# - Truncates to max length
+# Arguments:
+#   $1 - The string to sanitize
+# Outputs:
+#   The sanitized string
+#######################################
+sanitize_cluster_name() {
+    local name="$1"
+
+    # Convert to lowercase
+    name=$(echo "$name" | tr '[:upper:]' '[:lower:]')
+
+    # Replace non-alphanumeric characters with hyphens
+    name=$(echo "$name" | sed 's/[^a-z0-9]/-/g')
+
+    # Collapse multiple consecutive hyphens into one
+    name=$(echo "$name" | sed 's/-\+/-/g')
+
+    # Remove leading and trailing hyphens
+    name=$(echo "$name" | sed 's/^-//;s/-$//')
+
+    # Truncate to max length
+    echo "${name:0:${MAX_CLUSTER_NAME_LENGTH}}"
+}
+
+#######################################
+# Gets the default cluster name based on the current git branch.
+# Falls back to "local" if not in a git repository.
+# Outputs:
+#   The cluster name with prefix (e.g., "mw-feature-my-branch")
+#######################################
+get_default_cluster_name() {
+    local branch_name
+
+    # Try to get the current git branch
+    if branch_name=$(git rev-parse --abbrev-ref HEAD 2>/dev/null); then
+        local sanitized
+        sanitized=$(sanitize_cluster_name "$branch_name")
+        echo "${CLUSTER_NAME_PREFIX}-${sanitized}"
+    else
+        # Not in a git repo, use fallback
+        echo "${CLUSTER_NAME_PREFIX}-local"
+    fi
+}
+
+#######################################
 # Prints the help message and exits.
 #######################################
 show_help() {
+    local default_name
+    default_name=$(get_default_cluster_name)
+
     cat << EOF
 Usage: $(basename "$0") [OPTIONS]
 
 Destroys the DigitalOcean Kubernetes cluster and cleans up the kubectl context.
 
+The cluster name defaults to a sanitized version of the current git branch,
+prefixed with "${CLUSTER_NAME_PREFIX}-" (e.g., "feature/my-test" becomes "${CLUSTER_NAME_PREFIX}-feature-my-test").
+
 Options:
-  --cluster-name NAME   Name of the DigitalOcean cluster (default: ${DEFAULT_CLUSTER_NAME})
+  --cluster-name NAME   Name of the DigitalOcean cluster (default: ${default_name})
   --dry-run             Print commands without executing them
   --help                Show this help message
 
 Environment Variables:
-  DO_CLUSTER_NAME       Alternative way to specify cluster name
+  DO_CLUSTER_NAME       Override the cluster name
 
 Examples:
-  # Destroy the default cluster
+  # Destroy cluster for current branch
   ./cluster-down.sh
 
   # Destroy a specific cluster
@@ -137,7 +198,12 @@ EOF
 #   $@ - All command-line arguments passed to the script
 #######################################
 parse_arguments() {
-    CLUSTER_NAME="${DO_CLUSTER_NAME:-${DEFAULT_CLUSTER_NAME}}"
+    # Default to environment variable, then git branch-based name
+    if [[ -n "${DO_CLUSTER_NAME:-}" ]]; then
+        CLUSTER_NAME="${DO_CLUSTER_NAME}"
+    else
+        CLUSTER_NAME=$(get_default_cluster_name)
+    fi
 
     while [[ $# -gt 0 ]]; do
         case "$1" in

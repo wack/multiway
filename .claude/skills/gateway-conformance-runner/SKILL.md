@@ -15,11 +15,25 @@ This skill includes automatic cluster management through hooks:
 - **Startup Hook** (`cluster-up.sh`): Runs before the skill starts. Creates the DigitalOcean Kubernetes cluster if it doesn't exist, or clears the namespace if it does. Ensures kubectl context is properly configured.
 - **Shutdown Hook** (`cluster-down.sh`): Runs after the skill completes. Destroys the DigitalOcean cluster and cleans up kubectl context to avoid unnecessary costs.
 
+## Cluster Naming
+
+The cluster name defaults to a sanitized version of the current git branch, prefixed with `mw-`. For example:
+- Branch `main` → cluster `mw-main`
+- Branch `feature/my-test` → cluster `mw-feature-my-test`
+- Branch `claude/migrate-kind-to-digitalocean-Ytxrr` → cluster `mw-claude-migrate-kind-to-digitalocean-ytxrr`
+
+This allows multiple developers or branches to have isolated clusters without conflicts.
+
+You can override the cluster name with `--cluster-name` or the `DO_CLUSTER_NAME` environment variable.
+
 You can also run these scripts manually:
 
 ```bash
-# Start or prepare the cluster
+# Start or prepare the cluster for current branch
 .claude/skills/gateway-conformance-runner/cluster-up.sh
+
+# Use a specific cluster name
+.claude/skills/gateway-conformance-runner/cluster-up.sh --cluster-name my-cluster
 
 # Destroy the cluster when done
 .claude/skills/gateway-conformance-runner/cluster-down.sh
@@ -43,6 +57,7 @@ Use the automated script located at `.claude/skills/gateway-conformance-runner/r
 |--------|-------------|
 | `--skip-build` | Skip Rust compilation and Docker image building (use when images already exist) |
 | `--skip-deploy` | Skip gateway controller deployment (use when controller is already running) |
+| `--cluster-name NAME` | Specify cluster name (default: derived from git branch, e.g., `mw-main`) |
 | `--dry-run` | Print commands without executing them |
 | `--help` | Show help message |
 
