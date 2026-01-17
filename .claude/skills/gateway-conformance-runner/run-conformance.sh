@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 #
-# run-conformance-local.sh
+# run-conformance.sh
 #
-# Runs the Gateway API conformance test suite locally against a Kind cluster.
+# Runs the Gateway API conformance test suite against a DigitalOcean Kubernetes cluster.
 # This script handles environment setup, cluster creation, image building,
 # deployment, and test execution with automatic recovery where possible.
 #
 # Usage:
-#   ./scripts/run-conformance-local.sh [OPTIONS]
+#   ./scripts/run-conformance.sh [OPTIONS]
 #
 # Options:
 #   --skip-build      Skip the Rust compilation and Docker image build steps
 #   --skip-deploy     Skip the gateway controller deployment step
-#   --cluster-name    Name of the Kind cluster (default: multiway-local)
+#   --cluster-name    Name of the DigitalOcean cluster (default: multiway-local)
 #   --dry-run         Print commands without executing them
 #   --help            Show this help message
 #
@@ -115,33 +115,35 @@ show_help() {
     cat << EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Runs the Gateway API conformance test suite locally against a Kind cluster.
+Runs the Gateway API conformance test suite against a DigitalOcean Kubernetes cluster.
 
 Options:
   --skip-build      Skip the Rust compilation and Docker image build steps
   --skip-deploy     Skip the gateway controller deployment step
-  --cluster-name    Name of the Kind cluster (default: ${DEFAULT_CLUSTER_NAME})
+  --cluster-name    Name of the DigitalOcean cluster (default: ${DEFAULT_CLUSTER_NAME})
   --dry-run         Print commands without executing them
   --help            Show this help message
 
 Environment Variables:
   GATEWAY_CONFORMANCE_SUITE   Path to the Gateway API repository root (required)
+  DO_REGISTRY                 DigitalOcean Container Registry URL (required)
+  DO_REGION                   DigitalOcean region for cluster (default: nyc1)
 
 Examples:
   # Run full conformance test workflow
-  ./scripts/run-conformance-local.sh
+  ./scripts/run-conformance.sh
 
   # Skip building if images already exist
-  ./scripts/run-conformance-local.sh --skip-build
+  ./scripts/run-conformance.sh --skip-build
 
   # Skip both build and deploy (just run tests)
-  ./scripts/run-conformance-local.sh --skip-build --skip-deploy
+  ./scripts/run-conformance.sh --skip-build --skip-deploy
 
   # Use a different cluster name
-  ./scripts/run-conformance-local.sh --cluster-name my-test-cluster
+  ./scripts/run-conformance.sh --cluster-name my-test-cluster
 
   # See what commands would be run without executing them
-  ./scripts/run-conformance-local.sh --dry-run
+  ./scripts/run-conformance.sh --dry-run
 EOF
     exit 0
 }
@@ -228,18 +230,18 @@ See: https://kubernetes.io/docs/tasks/tools/install-kubectl/"
 }
 
 #######################################
-# Verifies that Kind is installed and available in PATH.
-# This is a non-recoverable check - Kind must be installed manually.
+# Verifies that doctl is installed and available in PATH.
+# This is a non-recoverable check - doctl must be installed manually.
 #######################################
-check_kind_available() {
-    info "Checking if Kind is available..."
+check_doctl_available() {
+    info "Checking if doctl is available..."
 
-    if ! command -v kind &>/dev/null; then
-        error_exit "Kind is not installed. Please install Kind and try again.
-See: https://kind.sigs.k8s.io/docs/user/quick-start/#installation"
+    if ! command -v doctl &>/dev/null; then
+        error_exit "doctl is not installed. Please install the DigitalOcean CLI and try again.
+See: https://docs.digitalocean.com/reference/doctl/how-to/install/"
     fi
 
-    success "Kind is available"
+    success "doctl is available"
 }
 
 #######################################
@@ -251,7 +253,7 @@ check_prerequisites() {
 
     check_docker_running
     check_kubectl_available
-    check_kind_available
+    check_doctl_available
 
     success "All prerequisites satisfied"
     echo ""
@@ -307,63 +309,65 @@ not the conformance subdirectory. The repository should contain a 'conformance/'
 # =============================================================================
 
 #######################################
-# Checks if the specified Kind cluster exists.
+# Checks if the specified DigitalOcean cluster exists.
 # Returns:
 #   0 if the cluster exists, 1 otherwise
 #######################################
-kind_cluster_exists() {
+do_cluster_exists() {
     local readonly cluster_name="$1"
-    kind get clusters 2>/dev/null | grep -q "^${cluster_name}$"
+    doctl kubernetes cluster list --format Name --no-header 2>/dev/null | grep -q "^${cluster_name}$"
 }
 
 #######################################
-# Creates a new Kind cluster if it doesn't exist.
+# Creates a new DigitalOcean Kubernetes cluster if it doesn't exist.
 # This is a recoverable operation - if the cluster is missing, we create it.
 # Arguments:
 #   Uses global CLUSTER_NAME variable
 #######################################
-ensure_kind_cluster_exists() {
-    info "Checking if Kind cluster '${CLUSTER_NAME}' exists..."
+ensure_do_cluster_exists() {
+    info "Checking if DigitalOcean cluster '${CLUSTER_NAME}' exists..."
 
-    if kind_cluster_exists "${CLUSTER_NAME}"; then
-        success "Kind cluster '${CLUSTER_NAME}' already exists"
+    if do_cluster_exists "${CLUSTER_NAME}"; then
+        success "DigitalOcean cluster '${CLUSTER_NAME}' already exists"
     else
-        warn "Kind cluster '${CLUSTER_NAME}' does not exist, creating it..."
-        run_cmd cargo make kind-create
+        warn "DigitalOcean cluster '${CLUSTER_NAME}' does not exist, creating it..."
+        run_cmd cargo make do-create
 
-        if [[ "${DRY_RUN}" != true ]] && ! kind_cluster_exists "${CLUSTER_NAME}"; then
-            error_exit "Failed to create Kind cluster '${CLUSTER_NAME}'"
+        if [[ "${DRY_RUN}" != true ]] && ! do_cluster_exists "${CLUSTER_NAME}"; then
+            error_exit "Failed to create DigitalOcean cluster '${CLUSTER_NAME}'"
         fi
 
-        success "Kind cluster '${CLUSTER_NAME}' created successfully"
+        success "DigitalOcean cluster '${CLUSTER_NAME}' created successfully"
     fi
 }
 
 #######################################
-# Ensures kubectl is configured to use the correct Kind cluster context.
+# Ensures kubectl is configured to use the correct DigitalOcean cluster context.
 # This is a recoverable operation - we switch context if needed.
 # Arguments:
 #   Uses global CLUSTER_NAME variable
 #######################################
 ensure_correct_kubectl_context() {
-    local readonly expected_context="kind-${CLUSTER_NAME}"
-
     info "Checking kubectl context..."
 
     local current_context
     current_context=$(kubectl config current-context 2>/dev/null || echo "")
 
-    if [[ "${current_context}" == "${expected_context}" ]]; then
-        success "kubectl context is already set to '${expected_context}'"
+    # DigitalOcean contexts are named do-<region>-<cluster-name>
+    # We just check if it contains our cluster name
+    if [[ "${current_context}" == *"${CLUSTER_NAME}"* ]]; then
+        success "kubectl context is already set to '${current_context}'"
     else
         if [[ -n "${current_context}" ]]; then
-            warn "kubectl context is '${current_context}', switching to '${expected_context}'..."
+            warn "kubectl context is '${current_context}', switching to DigitalOcean cluster..."
         else
-            warn "No kubectl context set, switching to '${expected_context}'..."
+            warn "No kubectl context set, switching to DigitalOcean cluster..."
         fi
 
-        run_cmd cargo make kind-use
-        success "Switched kubectl context to '${expected_context}'"
+        run_cmd cargo make do-use
+        local new_context
+        new_context=$(kubectl config current-context 2>/dev/null || echo "unknown")
+        success "Switched kubectl context to '${new_context}'"
     fi
 }
 
@@ -398,7 +402,7 @@ verify_cluster_accessible() {
 setup_kubernetes_cluster() {
     info "=== Phase: Kubernetes Cluster Setup ==="
 
-    ensure_kind_cluster_exists
+    ensure_do_cluster_exists
     ensure_correct_kubectl_context
     verify_cluster_accessible
 
@@ -439,35 +443,32 @@ build_docker_images() {
 }
 
 #######################################
-# Loads Docker images into the Kind cluster.
-# This is an idempotent operation - loading images that already exist is safe.
-# Arguments:
-#   Uses global CLUSTER_NAME variable
+# Pushes Docker images to the DigitalOcean Container Registry.
+# This requires DO_REGISTRY environment variable to be set.
 #######################################
-load_images_into_kind() {
-    info "Loading images into Kind cluster..."
+push_images_to_registry() {
+    info "Pushing images to DigitalOcean Container Registry..."
 
-    # Load control plane image
-    info "Loading multiway-controlplane:latest..."
-    if ! run_cmd kind load docker-image multiway-controlplane:latest --name "${CLUSTER_NAME}"; then
-        error_exit "Failed to load control plane image into Kind cluster"
+    if [[ -z "${DO_REGISTRY:-}" ]]; then
+        error_exit "DO_REGISTRY environment variable is not set.
+Please set it to your DigitalOcean Container Registry URL.
+Example: export DO_REGISTRY=registry.digitalocean.com/myregistry"
     fi
 
-    # Load data plane image
-    info "Loading multiway-dataplane:latest..."
-    if ! run_cmd kind load docker-image multiway-dataplane:latest --name "${CLUSTER_NAME}"; then
-        error_exit "Failed to load data plane image into Kind cluster"
+    # Push images using cargo make task
+    if ! run_cmd cargo make do-push-images; then
+        error_exit "Failed to push images to registry"
     fi
 
-    success "Images loaded into Kind cluster"
+    success "Images pushed to registry"
 }
 
 #######################################
-# Orchestrates the build and image loading phase.
+# Orchestrates the build and image push phase.
 # Can be skipped with --skip-build flag for faster iteration.
 #######################################
-build_and_load_images() {
-    info "=== Phase: Build and Load Images ==="
+build_and_push_images() {
+    info "=== Phase: Build and Push Images ==="
 
     if [[ "${SKIP_BUILD}" == true ]]; then
         warn "Skipping build phase (--skip-build specified)"
@@ -477,9 +478,9 @@ build_and_load_images() {
 
     verify_rust_compiles
     build_docker_images
-    load_images_into_kind
+    push_images_to_registry
 
-    success "Build and load phase complete"
+    success "Build and push phase complete"
     echo ""
 }
 
@@ -663,14 +664,8 @@ deploy_gateway_components() {
 # Runs the Gateway API conformance test suite from the local repository.
 # Test failures are expected output and do not cause the script to fail.
 #
-# Note: The Kind cluster must be configured with extraPortMappings (ports 80/443)
-# and the gateway controller uses hostPort to expose the data plane directly on
-# the node. This allows external traffic to reach the Gateway at 127.0.0.1:80.
-#
-# Limitation: Only one Gateway per port can be active on a single-node cluster.
-# The conformance test setup creates multiple Gateways, so some may fail to
-# schedule due to hostPort conflicts. For full multi-Gateway support, use
-# MetalLB or a multi-node cluster.
+# The DigitalOcean Kubernetes cluster provides real LoadBalancer support,
+# so external traffic can reach the Gateway through DigitalOcean's load balancers.
 #######################################
 run_conformance_tests() {
     info "=== Phase: Run Conformance Tests ==="
@@ -735,7 +730,7 @@ main() {
     check_prerequisites
     verify_conformance_suite_env
     setup_kubernetes_cluster
-    build_and_load_images
+    build_and_push_images
     deploy_gateway_components
     run_conformance_tests
 

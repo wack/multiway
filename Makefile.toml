@@ -113,29 +113,91 @@ args = [
   "@@split(CARGO_MAKE_CARGO_BUILD_TEST_FLAGS, )",
 ]
 
-[tasks.kind-create]
-description = "Create a kind Kubernetes cluster with port mappings for Gateway testing"
+[tasks.do-create]
+description = "Create a DigitalOcean Kubernetes cluster for Gateway testing"
 category = "Kubernetes"
-command = "kind"
-args = ["create", "cluster", "--name", "multiway-local", "--config", ".claude/skills/gateway-conformance-runner/kind-config.yaml"]
+script_runner = "@shell"
+script = '''
+set -e
+CLUSTER_NAME="${DO_CLUSTER_NAME:-multiway-local}"
+REGION="${DO_REGION:-nyc1}"
+NODE_SIZE="s-2vcpu-4gb"
+NODE_COUNT=4
 
-[tasks.kind-delete]
-description = "Delete the kind Kubernetes cluster"
-category = "Kubernetes"
-command = "kind"
-args = ["delete", "cluster", "--name", "multiway-local"]
+echo "Creating DigitalOcean Kubernetes cluster..."
+echo "  Cluster name: ${CLUSTER_NAME}"
+echo "  Region: ${REGION}"
+echo "  Node size: ${NODE_SIZE}"
+echo "  Node count: ${NODE_COUNT}"
 
-[tasks.kind-list]
-description = "List kind clusters"
-category = "Kubernetes"
-command = "kind"
-args = ["get", "clusters"]
+doctl kubernetes cluster create "${CLUSTER_NAME}" \
+  --region "${REGION}" \
+  --size "${NODE_SIZE}" \
+  --count "${NODE_COUNT}" \
+  --wait
 
-[tasks.kind-use]
-description = "Set kubectl context to the multiway-local cluster"
+echo "Cluster created successfully. Saving kubeconfig..."
+doctl kubernetes cluster kubeconfig save "${CLUSTER_NAME}"
+'''
+
+[tasks.do-delete]
+description = "Delete the DigitalOcean Kubernetes cluster"
 category = "Kubernetes"
-command = "kubectl"
-args = ["config", "use-context", "kind-multiway-local"]
+script_runner = "@shell"
+script = '''
+CLUSTER_NAME="${DO_CLUSTER_NAME:-multiway-local}"
+echo "Deleting DigitalOcean Kubernetes cluster: ${CLUSTER_NAME}"
+doctl kubernetes cluster delete "${CLUSTER_NAME}" --force --dangerous
+'''
+
+[tasks.do-list]
+description = "List DigitalOcean Kubernetes clusters"
+category = "Kubernetes"
+command = "doctl"
+args = ["kubernetes", "cluster", "list"]
+
+[tasks.do-use]
+description = "Set kubectl context to the DigitalOcean cluster"
+category = "Kubernetes"
+script_runner = "@shell"
+script = '''
+CLUSTER_NAME="${DO_CLUSTER_NAME:-multiway-local}"
+echo "Saving kubeconfig for cluster: ${CLUSTER_NAME}"
+doctl kubernetes cluster kubeconfig save "${CLUSTER_NAME}"
+'''
+
+[tasks.do-registry-login]
+description = "Login to DigitalOcean Container Registry"
+category = "Kubernetes"
+script_runner = "@shell"
+script = '''
+echo "Logging in to DigitalOcean Container Registry..."
+doctl registry login
+'''
+
+[tasks.do-push-images]
+description = "Push control plane and data plane images to DigitalOcean Container Registry"
+category = "Kubernetes"
+dependencies = ["docker-build-all"]
+script_runner = "@shell"
+script = '''
+set -e
+if [ -z "$DO_REGISTRY" ]; then
+  echo "Error: DO_REGISTRY environment variable not set"
+  echo "Example: export DO_REGISTRY=registry.digitalocean.com/myregistry"
+  exit 1
+fi
+
+echo "Tagging and pushing control plane image..."
+docker tag multiway-controlplane:latest ${DO_REGISTRY}/multiway-controlplane:latest
+docker push ${DO_REGISTRY}/multiway-controlplane:latest
+
+echo "Tagging and pushing data plane image..."
+docker tag multiway-dataplane:latest ${DO_REGISTRY}/multiway-dataplane:latest
+docker push ${DO_REGISTRY}/multiway-dataplane:latest
+
+echo "Images pushed successfully to ${DO_REGISTRY}"
+'''
 
 [tasks.gateway-api-refresh]
 description = "Download and split the Gateway API CRDs"
@@ -250,12 +312,23 @@ docker build \
   conformance/
 '''
 
-[tasks.conformance-load]
-description = "Load the conformance test image into kind cluster"
+[tasks.conformance-push]
+description = "Push the conformance test image to the container registry"
 category = "Conformance"
 script_runner = "@shell"
 script = '''
-kind load docker-image multiway-conformance:latest --name multiway-local
+set -e
+if [ -z "$DO_REGISTRY" ]; then
+  echo "Error: DO_REGISTRY environment variable not set"
+  echo "Example: export DO_REGISTRY=registry.digitalocean.com/myregistry"
+  exit 1
+fi
+
+echo "Tagging conformance image for registry..."
+docker tag multiway-conformance:latest ${DO_REGISTRY}/multiway-conformance:latest
+
+echo "Pushing conformance image to registry..."
+docker push ${DO_REGISTRY}/multiway-conformance:latest
 '''
 
 [tasks.conformance-cleanup]
@@ -332,9 +405,9 @@ kubectl logs -n gateway-conformance-infra job/gateway-api-conformance --tail=-1
 '''
 
 [tasks.conformance]
-description = "Build, load, and run conformance tests (full workflow)"
+description = "Build, push, and run conformance tests (full workflow)"
 category = "Conformance"
-dependencies = ["conformance-build", "conformance-load", "conformance-run"]
+dependencies = ["conformance-build", "conformance-push", "conformance-run"]
 
 # Docker Build Tasks
 # These tasks build the control plane and data plane container images.
