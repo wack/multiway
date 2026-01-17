@@ -57,7 +57,7 @@ DRY_RUN=false
 #   $1 - The message to print
 #######################################
 info() {
-    local readonly message="$1"
+    local -r message="$1"
     echo -e "${COLOR_BLUE}[INFO]${COLOR_RESET} ${message}"
 }
 
@@ -67,7 +67,7 @@ info() {
 #   $1 - The message to print
 #######################################
 success() {
-    local readonly message="$1"
+    local -r message="$1"
     echo -e "${COLOR_GREEN}[OK]${COLOR_RESET} ${message}"
 }
 
@@ -77,7 +77,7 @@ success() {
 #   $1 - The message to print
 #######################################
 warn() {
-    local readonly message="$1"
+    local -r message="$1"
     echo -e "${COLOR_YELLOW}[WARN]${COLOR_RESET} ${message}"
 }
 
@@ -87,7 +87,7 @@ warn() {
 #   $1 - The error message to print
 #######################################
 error_exit() {
-    local readonly message="$1"
+    local -r message="$1"
     echo -e "${COLOR_RED}[ERROR]${COLOR_RESET} ${message}" >&2
     exit 1
 }
@@ -290,7 +290,7 @@ Please clone the Gateway API repository:
     fi
 
     # Verify the conformance directory exists within the repository
-    local readonly conformance_dir="${GATEWAY_CONFORMANCE_SUITE}/conformance"
+    local -r conformance_dir="${GATEWAY_CONFORMANCE_SUITE}/conformance"
     if [[ ! -d "${conformance_dir}" ]]; then
         error_exit "Conformance directory not found at: ${conformance_dir}
 
@@ -312,7 +312,7 @@ not the conformance subdirectory. The repository should contain a 'conformance/'
 #   0 if the cluster exists, 1 otherwise
 #######################################
 kind_cluster_exists() {
-    local readonly cluster_name="$1"
+    local -r cluster_name="$1"
     kind get clusters 2>/dev/null | grep -q "^${cluster_name}$"
 }
 
@@ -346,7 +346,7 @@ ensure_kind_cluster_exists() {
 #   Uses global CLUSTER_NAME variable
 #######################################
 ensure_correct_kubectl_context() {
-    local readonly expected_context="kind-${CLUSTER_NAME}"
+    local -r expected_context="kind-${CLUSTER_NAME}"
 
     info "Checking kubectl context..."
 
@@ -493,7 +493,7 @@ build_and_load_images() {
 #   0 if the namespace exists, 1 otherwise
 #######################################
 namespace_exists() {
-    local readonly ns="$1"
+    local -r ns="$1"
     kubectl get namespace "${ns}" &>/dev/null
 }
 
@@ -691,7 +691,7 @@ run_conformance_tests() {
     (
         cd "${GATEWAY_CONFORMANCE_SUITE}" && make conformance
     )
-    local readonly test_exit_code=$?
+    local -r test_exit_code=$?
     set -e
 
     echo ""

@@ -21,6 +21,7 @@ dependencies = [
   "pre-build",
   "format-flow",
   "clippy-flow",
+  "shellcheck",
   "build",
   "post-build",
   "pre-docs",
@@ -39,6 +40,7 @@ dependencies = [
   "pre-build",
   "check-format-flow",
   "clippy-flow",
+  "shellcheck",
   "build",
   "post-build",
   "pre-docs",
@@ -469,3 +471,14 @@ docker buildx build \
 description = "Build and push both images for amd64 and arm64"
 category = "Docker"
 dependencies = ["docker-build-controlplane-push", "docker-build-dataplane-push"]
+
+# Shell Script Validation
+# These tasks validate shell scripts using shellcheck for professional quality standards.
+
+[tasks.shellcheck]
+description = "Run shellcheck on all shell scripts"
+category = "Lint"
+script_runner = "@shell"
+script = '''
+find . -name "*.sh" -not -path "./target/*" -print0 | xargs -0 shellcheck --severity=warning
+'''
