@@ -4,7 +4,7 @@
 # enabling external access to Gateway data planes using hostPort.
 #
 # Usage:
-#   kind create cluster --name multiway-local --config kind-config.yaml
+#   kind create cluster --name multiway-local --config .claude/skills/gateway-conformance-runner/kind-config.yaml
 #
 # Note: Multiple Gateways using the same port (e.g., port 80) cannot be run
 # simultaneously on a single-node cluster. For full multi-Gateway support,
