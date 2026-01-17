@@ -166,15 +166,6 @@ echo "Saving kubeconfig for cluster: ${CLUSTER_NAME}"
 doctl kubernetes cluster kubeconfig save "${CLUSTER_NAME}"
 '''
 
-[tasks.do-registry-login]
-description = "Login to DigitalOcean Container Registry"
-category = "Kubernetes"
-script_runner = "@shell"
-script = '''
-echo "Logging in to DigitalOcean Container Registry..."
-doctl registry login
-'''
-
 [tasks.do-push-images]
 description = "Push control plane and data plane images to container registry"
 category = "Kubernetes"
