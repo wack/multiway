@@ -176,27 +176,27 @@ doctl registry login
 '''
 
 [tasks.do-push-images]
-description = "Push control plane and data plane images to DigitalOcean Container Registry"
+description = "Push control plane and data plane images to container registry"
 category = "Kubernetes"
 dependencies = ["docker-build-all"]
 script_runner = "@shell"
 script = '''
 set -e
-if [ -z "$DO_REGISTRY" ]; then
-  echo "Error: DO_REGISTRY environment variable not set"
-  echo "Example: export DO_REGISTRY=registry.digitalocean.com/myregistry"
+if [ -z "$DOCKER_REGISTRY" ]; then
+  echo "Error: DOCKER_REGISTRY environment variable not set"
+  echo "Example: export DOCKER_REGISTRY=ghcr.io/myorg"
   exit 1
 fi
 
 echo "Tagging and pushing control plane image..."
-docker tag multiway-controlplane:latest ${DO_REGISTRY}/multiway-controlplane:latest
-docker push ${DO_REGISTRY}/multiway-controlplane:latest
+docker tag multiway-controlplane:latest ${DOCKER_REGISTRY}/multiway-controlplane:latest
+docker push ${DOCKER_REGISTRY}/multiway-controlplane:latest
 
 echo "Tagging and pushing data plane image..."
-docker tag multiway-dataplane:latest ${DO_REGISTRY}/multiway-dataplane:latest
-docker push ${DO_REGISTRY}/multiway-dataplane:latest
+docker tag multiway-dataplane:latest ${DOCKER_REGISTRY}/multiway-dataplane:latest
+docker push ${DOCKER_REGISTRY}/multiway-dataplane:latest
 
-echo "Images pushed successfully to ${DO_REGISTRY}"
+echo "Images pushed successfully to ${DOCKER_REGISTRY}"
 '''
 
 [tasks.gateway-api-refresh]
@@ -318,17 +318,17 @@ category = "Conformance"
 script_runner = "@shell"
 script = '''
 set -e
-if [ -z "$DO_REGISTRY" ]; then
-  echo "Error: DO_REGISTRY environment variable not set"
-  echo "Example: export DO_REGISTRY=registry.digitalocean.com/myregistry"
+if [ -z "$DOCKER_REGISTRY" ]; then
+  echo "Error: DOCKER_REGISTRY environment variable not set"
+  echo "Example: export DOCKER_REGISTRY=ghcr.io/myorg"
   exit 1
 fi
 
 echo "Tagging conformance image for registry..."
-docker tag multiway-conformance:latest ${DO_REGISTRY}/multiway-conformance:latest
+docker tag multiway-conformance:latest ${DOCKER_REGISTRY}/multiway-conformance:latest
 
 echo "Pushing conformance image to registry..."
-docker push ${DO_REGISTRY}/multiway-conformance:latest
+docker push ${DOCKER_REGISTRY}/multiway-conformance:latest
 '''
 
 [tasks.conformance-cleanup]

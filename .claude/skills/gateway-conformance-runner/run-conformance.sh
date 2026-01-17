@@ -3,16 +3,18 @@
 # run-conformance.sh
 #
 # Runs the Gateway API conformance test suite against a DigitalOcean Kubernetes cluster.
-# This script handles environment setup, cluster creation, image building,
-# deployment, and test execution with automatic recovery where possible.
+# This script handles image building, deployment, and test execution.
+#
+# IMPORTANT: This script assumes the cluster is already running. Use cluster-up.sh
+# to start the cluster before running this script, and cluster-down.sh to stop it
+# when finished.
 #
 # Usage:
-#   ./scripts/run-conformance.sh [OPTIONS]
+#   ./run-conformance.sh [OPTIONS]
 #
 # Options:
 #   --skip-build      Skip the Rust compilation and Docker image build steps
 #   --skip-deploy     Skip the gateway controller deployment step
-#   --cluster-name    Name of the DigitalOcean cluster (default: multiway-local)
 #   --dry-run         Print commands without executing them
 #   --help            Show this help message
 #
@@ -23,8 +25,6 @@ set -euo pipefail
 # CONFIGURATION
 # =============================================================================
 
-# Default configuration values (can be overridden via command-line arguments)
-readonly DEFAULT_CLUSTER_NAME="multiway-local"
 readonly DEFAULT_NAMESPACE="multiway-system"
 readonly DEFAULT_POD_LABEL="app.kubernetes.io/name=multiway"
 readonly DEFAULT_POD_READY_TIMEOUT="120s"
@@ -41,8 +41,6 @@ readonly COLOR_RESET='\033[0m'
 # GLOBAL STATE
 # =============================================================================
 
-# These variables are set by parse_arguments() and used throughout the script
-CLUSTER_NAME=""
 SKIP_BUILD=false
 SKIP_DEPLOY=false
 DRY_RUN=false
@@ -117,33 +115,30 @@ Usage: $(basename "$0") [OPTIONS]
 
 Runs the Gateway API conformance test suite against a DigitalOcean Kubernetes cluster.
 
+IMPORTANT: The cluster must already be running. Use cluster-up.sh to start it first.
+
 Options:
   --skip-build      Skip the Rust compilation and Docker image build steps
   --skip-deploy     Skip the gateway controller deployment step
-  --cluster-name    Name of the DigitalOcean cluster (default: ${DEFAULT_CLUSTER_NAME})
   --dry-run         Print commands without executing them
   --help            Show this help message
 
 Environment Variables:
   GATEWAY_CONFORMANCE_SUITE   Path to the Gateway API repository root (required)
-  DO_REGISTRY                 DigitalOcean Container Registry URL (required)
-  DO_REGION                   DigitalOcean region for cluster (default: nyc1)
+  DOCKER_REGISTRY             Container registry URL (required for build, e.g., ghcr.io/myorg)
 
 Examples:
   # Run full conformance test workflow
-  ./scripts/run-conformance.sh
+  ./run-conformance.sh
 
   # Skip building if images already exist
-  ./scripts/run-conformance.sh --skip-build
+  ./run-conformance.sh --skip-build
 
   # Skip both build and deploy (just run tests)
-  ./scripts/run-conformance.sh --skip-build --skip-deploy
-
-  # Use a different cluster name
-  ./scripts/run-conformance.sh --cluster-name my-test-cluster
+  ./run-conformance.sh --skip-build --skip-deploy
 
   # See what commands would be run without executing them
-  ./scripts/run-conformance.sh --dry-run
+  ./run-conformance.sh --dry-run
 EOF
     exit 0
 }
@@ -156,15 +151,8 @@ EOF
 # Parses command-line arguments and sets global configuration variables.
 # Arguments:
 #   $@ - All command-line arguments passed to the script
-# Globals:
-#   CLUSTER_NAME - Set to the specified or default cluster name
-#   SKIP_BUILD   - Set to true if --skip-build is provided
-#   SKIP_DEPLOY  - Set to true if --skip-deploy is provided
-#   DRY_RUN      - Set to true if --dry-run is provided
 #######################################
 parse_arguments() {
-    CLUSTER_NAME="${DEFAULT_CLUSTER_NAME}"
-
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --skip-build)
@@ -174,13 +162,6 @@ parse_arguments() {
             --skip-deploy)
                 SKIP_DEPLOY=true
                 shift
-                ;;
-            --cluster-name)
-                if [[ -z "${2:-}" ]]; then
-                    error_exit "--cluster-name requires a value"
-                fi
-                CLUSTER_NAME="$2"
-                shift 2
                 ;;
             --dry-run)
                 DRY_RUN=true
@@ -197,12 +178,11 @@ parse_arguments() {
 }
 
 # =============================================================================
-# PREREQUISITE CHECKS (Non-recoverable)
+# PREREQUISITE CHECKS
 # =============================================================================
 
 #######################################
 # Verifies that the Docker daemon is running.
-# This is a non-recoverable check - if Docker is not running, the script exits.
 #######################################
 check_docker_running() {
     info "Checking if Docker is running..."
@@ -216,7 +196,6 @@ check_docker_running() {
 
 #######################################
 # Verifies that kubectl is installed and available in PATH.
-# This is a non-recoverable check - kubectl must be installed manually.
 #######################################
 check_kubectl_available() {
     info "Checking if kubectl is available..."
@@ -230,48 +209,58 @@ See: https://kubernetes.io/docs/tasks/tools/install-kubectl/"
 }
 
 #######################################
-# Verifies that doctl is installed and available in PATH.
-# This is a non-recoverable check - doctl must be installed manually.
+# Verifies that the Kubernetes cluster is accessible.
 #######################################
-check_doctl_available() {
-    info "Checking if doctl is available..."
+verify_cluster_accessible() {
+    info "Verifying cluster is accessible..."
 
-    if ! command -v doctl &>/dev/null; then
-        error_exit "doctl is not installed. Please install the DigitalOcean CLI and try again.
-See: https://docs.digitalocean.com/reference/doctl/how-to/install/"
+    if [[ "${DRY_RUN}" == true ]]; then
+        echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} kubectl get nodes"
+        success "Cluster accessibility check skipped (dry-run mode)"
+        return 0
     fi
 
-    success "doctl is available"
+    if ! kubectl get nodes &>/dev/null; then
+        error_exit "Cannot access Kubernetes cluster.
+
+Please ensure the cluster is running by executing:
+    ./cluster-up.sh
+
+If the cluster is running, check your kubectl context with:
+    kubectl config current-context"
+    fi
+
+    info "Cluster nodes:"
+    kubectl get nodes
+
+    success "Cluster is accessible"
 }
 
 #######################################
-# Runs all prerequisite checks that are non-recoverable.
-# If any check fails, the script will exit with an error message.
+# Runs all prerequisite checks.
 #######################################
 check_prerequisites() {
     info "=== Phase: Prerequisites ==="
 
     check_docker_running
     check_kubectl_available
-    check_doctl_available
+    verify_cluster_accessible
 
     success "All prerequisites satisfied"
     echo ""
 }
 
 # =============================================================================
-# ENVIRONMENT VERIFICATION (Non-recoverable)
+# ENVIRONMENT VERIFICATION
 # =============================================================================
 
 #######################################
 # Verifies that the GATEWAY_CONFORMANCE_SUITE environment variable is set
 # and points to a valid Gateway API repository with a conformance directory.
-# This is non-recoverable - the user must configure this manually.
 #######################################
 verify_conformance_suite_env() {
     info "=== Phase: Environment Verification ==="
 
-    # Check if the environment variable is set
     if [[ -z "${GATEWAY_CONFORMANCE_SUITE:-}" ]]; then
         error_exit "GATEWAY_CONFORMANCE_SUITE environment variable is not set.
 
@@ -283,15 +272,13 @@ The path should point to the root of the Gateway API repository clone."
 
     info "GATEWAY_CONFORMANCE_SUITE is set to: ${GATEWAY_CONFORMANCE_SUITE}"
 
-    # Verify the path exists
     if [[ ! -d "${GATEWAY_CONFORMANCE_SUITE}" ]]; then
         error_exit "GATEWAY_CONFORMANCE_SUITE path does not exist: ${GATEWAY_CONFORMANCE_SUITE}
 
 Please clone the Gateway API repository:
-    git clone https://github.com/wack/gateway-api.git ${GATEWAY_CONFORMANCE_SUITE}"
+    git clone https://github.com/kubernetes-sigs/gateway-api.git ${GATEWAY_CONFORMANCE_SUITE}"
     fi
 
-    # Verify the conformance directory exists within the repository
     local readonly conformance_dir="${GATEWAY_CONFORMANCE_SUITE}/conformance"
     if [[ ! -d "${conformance_dir}" ]]; then
         error_exit "Conformance directory not found at: ${conformance_dir}
@@ -305,118 +292,11 @@ not the conformance subdirectory. The repository should contain a 'conformance/'
 }
 
 # =============================================================================
-# KUBERNETES CLUSTER MANAGEMENT (Recoverable)
-# =============================================================================
-
-#######################################
-# Checks if the specified DigitalOcean cluster exists.
-# Returns:
-#   0 if the cluster exists, 1 otherwise
-#######################################
-do_cluster_exists() {
-    local readonly cluster_name="$1"
-    doctl kubernetes cluster list --format Name --no-header 2>/dev/null | grep -q "^${cluster_name}$"
-}
-
-#######################################
-# Creates a new DigitalOcean Kubernetes cluster if it doesn't exist.
-# This is a recoverable operation - if the cluster is missing, we create it.
-# Arguments:
-#   Uses global CLUSTER_NAME variable
-#######################################
-ensure_do_cluster_exists() {
-    info "Checking if DigitalOcean cluster '${CLUSTER_NAME}' exists..."
-
-    if do_cluster_exists "${CLUSTER_NAME}"; then
-        success "DigitalOcean cluster '${CLUSTER_NAME}' already exists"
-    else
-        warn "DigitalOcean cluster '${CLUSTER_NAME}' does not exist, creating it..."
-        run_cmd cargo make do-create
-
-        if [[ "${DRY_RUN}" != true ]] && ! do_cluster_exists "${CLUSTER_NAME}"; then
-            error_exit "Failed to create DigitalOcean cluster '${CLUSTER_NAME}'"
-        fi
-
-        success "DigitalOcean cluster '${CLUSTER_NAME}' created successfully"
-    fi
-}
-
-#######################################
-# Ensures kubectl is configured to use the correct DigitalOcean cluster context.
-# This is a recoverable operation - we switch context if needed.
-# Arguments:
-#   Uses global CLUSTER_NAME variable
-#######################################
-ensure_correct_kubectl_context() {
-    info "Checking kubectl context..."
-
-    local current_context
-    current_context=$(kubectl config current-context 2>/dev/null || echo "")
-
-    # DigitalOcean contexts are named do-<region>-<cluster-name>
-    # We just check if it contains our cluster name
-    if [[ "${current_context}" == *"${CLUSTER_NAME}"* ]]; then
-        success "kubectl context is already set to '${current_context}'"
-    else
-        if [[ -n "${current_context}" ]]; then
-            warn "kubectl context is '${current_context}', switching to DigitalOcean cluster..."
-        else
-            warn "No kubectl context set, switching to DigitalOcean cluster..."
-        fi
-
-        run_cmd cargo make do-use
-        local new_context
-        new_context=$(kubectl config current-context 2>/dev/null || echo "unknown")
-        success "Switched kubectl context to '${new_context}'"
-    fi
-}
-
-#######################################
-# Verifies that the Kubernetes cluster is accessible and ready.
-# This validates that we can communicate with the cluster after context setup.
-#######################################
-verify_cluster_accessible() {
-    info "Verifying cluster is accessible..."
-
-    if [[ "${DRY_RUN}" == true ]]; then
-        echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} kubectl get nodes"
-        success "Cluster accessibility check skipped (dry-run mode)"
-        return 0
-    fi
-
-    if ! kubectl get nodes &>/dev/null; then
-        error_exit "Cannot access Kubernetes cluster. Please check your cluster status."
-    fi
-
-    # Display node status for confirmation
-    info "Cluster nodes:"
-    kubectl get nodes
-
-    success "Cluster is accessible"
-}
-
-#######################################
-# Orchestrates all Kubernetes cluster setup steps with recovery logic.
-# Creates the cluster if missing, sets the correct context, and verifies access.
-#######################################
-setup_kubernetes_cluster() {
-    info "=== Phase: Kubernetes Cluster Setup ==="
-
-    ensure_do_cluster_exists
-    ensure_correct_kubectl_context
-    verify_cluster_accessible
-
-    success "Kubernetes cluster is ready"
-    echo ""
-}
-
-# =============================================================================
-# BUILD AND LOAD IMAGES
+# BUILD AND PUSH IMAGES
 # =============================================================================
 
 #######################################
 # Verifies that the Rust project compiles successfully.
-# This is a non-recoverable check - compilation errors require code fixes.
 #######################################
 verify_rust_compiles() {
     info "Verifying Rust project compiles..."
@@ -430,7 +310,6 @@ verify_rust_compiles() {
 
 #######################################
 # Builds the Docker images for control plane and data plane.
-# This is a non-recoverable operation - build failures require investigation.
 #######################################
 build_docker_images() {
     info "Building Docker images..."
@@ -443,19 +322,17 @@ build_docker_images() {
 }
 
 #######################################
-# Pushes Docker images to the DigitalOcean Container Registry.
-# This requires DO_REGISTRY environment variable to be set.
+# Pushes Docker images to the container registry.
 #######################################
 push_images_to_registry() {
-    info "Pushing images to DigitalOcean Container Registry..."
+    info "Pushing images to container registry..."
 
-    if [[ -z "${DO_REGISTRY:-}" ]]; then
-        error_exit "DO_REGISTRY environment variable is not set.
-Please set it to your DigitalOcean Container Registry URL.
-Example: export DO_REGISTRY=registry.digitalocean.com/myregistry"
+    if [[ -z "${DOCKER_REGISTRY:-}" ]]; then
+        error_exit "DOCKER_REGISTRY environment variable is not set.
+Please set it to your container registry URL.
+Example: export DOCKER_REGISTRY=ghcr.io/myorg"
     fi
 
-    # Push images using cargo make task
     if ! run_cmd cargo make do-push-images; then
         error_exit "Failed to push images to registry"
     fi
@@ -465,7 +342,6 @@ Example: export DO_REGISTRY=registry.digitalocean.com/myregistry"
 
 #######################################
 # Orchestrates the build and image push phase.
-# Can be skipped with --skip-build flag for faster iteration.
 #######################################
 build_and_push_images() {
     info "=== Phase: Build and Push Images ==="
@@ -485,13 +361,11 @@ build_and_push_images() {
 }
 
 # =============================================================================
-# DEPLOY GATEWAY COMPONENTS (Recoverable)
+# DEPLOY GATEWAY COMPONENTS
 # =============================================================================
 
 #######################################
 # Checks if the gateway namespace exists in the cluster.
-# Returns:
-#   0 if the namespace exists, 1 otherwise
 #######################################
 namespace_exists() {
     local readonly ns="$1"
@@ -500,9 +374,6 @@ namespace_exists() {
 
 #######################################
 # Cleans up any existing gateway deployments by deleting the namespace.
-# This ensures a fresh state before deploying new components.
-# The function is idempotent - it safely handles the case where the
-# namespace doesn't exist.
 #######################################
 cleanup_existing_deployment() {
     info "Cleaning up existing deployments in namespace '${DEFAULT_NAMESPACE}'..."
@@ -514,23 +385,18 @@ cleanup_existing_deployment() {
         return 0
     fi
 
-    # Check if namespace exists before attempting deletion
     if ! namespace_exists "${DEFAULT_NAMESPACE}"; then
         success "Namespace '${DEFAULT_NAMESPACE}' does not exist, nothing to clean up"
         return 0
     fi
 
-    # Delete the namespace (this removes all resources within it)
     info "Deleting namespace '${DEFAULT_NAMESPACE}' and all its resources..."
     if ! kubectl delete namespace "${DEFAULT_NAMESPACE}" --ignore-not-found; then
         error_exit "Failed to delete namespace '${DEFAULT_NAMESPACE}'"
     fi
 
-    # Wait for the namespace to be fully deleted
-    # This is important because Kubernetes namespace deletion is asynchronous
     info "Waiting for namespace deletion to complete..."
     if ! kubectl wait --for=delete namespace/"${DEFAULT_NAMESPACE}" --timeout=60s 2>/dev/null; then
-        # The wait command may fail if the namespace is already gone, which is fine
         if namespace_exists "${DEFAULT_NAMESPACE}"; then
             error_exit "Namespace '${DEFAULT_NAMESPACE}' was not deleted within timeout"
         fi
@@ -541,7 +407,6 @@ cleanup_existing_deployment() {
 
 #######################################
 # Creates a fresh namespace for the gateway components.
-# This should be called after cleanup_existing_deployment.
 #######################################
 create_fresh_namespace() {
     info "Creating fresh namespace '${DEFAULT_NAMESPACE}'..."
@@ -561,7 +426,6 @@ create_fresh_namespace() {
 
 #######################################
 # Installs or updates the Gateway API CRDs in the cluster.
-# This is an idempotent operation - running it multiple times is safe.
 #######################################
 install_gateway_api_crds() {
     info "Installing Gateway API CRDs..."
@@ -575,12 +439,10 @@ install_gateway_api_crds() {
 
 #######################################
 # Deploys the gateway controller to the cluster.
-# Assumes the namespace has already been created by create_fresh_namespace().
 #######################################
 deploy_gateway_controller() {
     info "Deploying gateway controller..."
 
-    # Deploy the controller using cargo make
     if ! run_cmd cargo make deploy; then
         error_exit "Failed to deploy gateway controller"
     fi
@@ -590,9 +452,6 @@ deploy_gateway_controller() {
 
 #######################################
 # Waits for the gateway controller pods to become ready.
-# Uses an initial timeout, with recovery logic to wait longer if needed.
-# Arguments:
-#   Uses global DEFAULT_NAMESPACE, DEFAULT_POD_LABEL, and timeout constants
 #######################################
 wait_for_controller_ready() {
     info "Waiting for controller pods to be ready..."
@@ -603,13 +462,11 @@ wait_for_controller_ready() {
         return 0
     fi
 
-    # First attempt with standard timeout
     if kubectl wait --for=condition=Ready pods -l "${DEFAULT_POD_LABEL}" -n "${DEFAULT_NAMESPACE}" --timeout="${DEFAULT_POD_READY_TIMEOUT}" 2>/dev/null; then
         success "Controller pods are ready"
         return 0
     fi
 
-    # Recovery: try with extended timeout
     warn "Pods not ready within ${DEFAULT_POD_READY_TIMEOUT}, extending wait to ${DEFAULT_EXTENDED_POD_READY_TIMEOUT}..."
 
     if kubectl wait --for=condition=Ready pods -l "${DEFAULT_POD_LABEL}" -n "${DEFAULT_NAMESPACE}" --timeout="${DEFAULT_EXTENDED_POD_READY_TIMEOUT}" 2>/dev/null; then
@@ -617,7 +474,6 @@ wait_for_controller_ready() {
         return 0
     fi
 
-    # Show pod status for debugging
     warn "Pods still not ready. Current pod status:"
     kubectl get pods -n "${DEFAULT_NAMESPACE}" -l "${DEFAULT_POD_LABEL}"
 
@@ -628,14 +484,6 @@ Please check the pod logs for errors:
 
 #######################################
 # Orchestrates the gateway component deployment phase.
-# Can be skipped with --skip-deploy flag for faster iteration.
-#
-# Steps:
-#   1. Clean up any existing deployments (delete namespace)
-#   2. Install Gateway API CRDs (cluster-scoped, not affected by namespace deletion)
-#   3. Create fresh namespace
-#   4. Deploy gateway controller
-#   5. Wait for controller pods to be ready
 #######################################
 deploy_gateway_components() {
     info "=== Phase: Deploy Gateway Components ==="
@@ -663,25 +511,18 @@ deploy_gateway_components() {
 #######################################
 # Runs the Gateway API conformance test suite from the local repository.
 # Test failures are expected output and do not cause the script to fail.
-#
-# The DigitalOcean Kubernetes cluster provides real LoadBalancer support,
-# so external traffic can reach the Gateway through DigitalOcean's load balancers.
 #######################################
 run_conformance_tests() {
     info "=== Phase: Run Conformance Tests ==="
 
     info "Running conformance tests from: ${GATEWAY_CONFORMANCE_SUITE}"
 
-    # Change to the conformance suite directory and run tests
-    # Note: We use a subshell to avoid changing the script's working directory
     if [[ "${DRY_RUN}" == true ]]; then
         echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} cd ${GATEWAY_CONFORMANCE_SUITE} && make conformance"
         success "Conformance test run skipped (dry-run mode)"
         return 0
     fi
 
-    # Run the conformance tests
-    # We use 'set +e' temporarily because test failures should not cause script exit
     set +e
     (
         cd "${GATEWAY_CONFORMANCE_SUITE}" && make conformance
@@ -704,32 +545,22 @@ run_conformance_tests() {
 # MAIN EXECUTION
 # =============================================================================
 
-#######################################
-# Main entry point for the script.
-# Orchestrates all phases of the conformance test workflow.
-# Arguments:
-#   $@ - All command-line arguments
-#######################################
 main() {
-    # Parse command-line arguments
     parse_arguments "$@"
 
     echo ""
     info "==========================================="
-    info "Gateway API Local Conformance Test Runner"
+    info "Gateway API Conformance Test Runner"
     info "==========================================="
     echo ""
     info "Configuration:"
-    info "  Cluster name: ${CLUSTER_NAME}"
     info "  Skip build:   ${SKIP_BUILD}"
     info "  Skip deploy:  ${SKIP_DEPLOY}"
     info "  Dry run:      ${DRY_RUN}"
     echo ""
 
-    # Run all phases in order
     check_prerequisites
     verify_conformance_suite_env
-    setup_kubernetes_cluster
     build_and_push_images
     deploy_gateway_components
     run_conformance_tests
@@ -740,5 +571,4 @@ main() {
     success "==========================================="
 }
 
-# Run main function with all script arguments
 main "$@"
