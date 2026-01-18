@@ -120,7 +120,7 @@ script_runner = "@shell"
 script = '''
 set -e
 CLUSTER_NAME="${DO_CLUSTER_NAME:-multiway-local}"
-REGION="${DO_REGION:-nyc1}"
+REGION="${DO_REGION:-nyc3}"
 NODE_SIZE="s-2vcpu-4gb"
 NODE_COUNT=4
 

@@ -87,9 +87,9 @@ Before running the skill, ensure:
    ```bash
    export DOCKER_REGISTRY=ghcr.io/myorg
    ```
-7. **`DO_REGION`** (optional) environment variable for the cluster region (default: `nyc1`):
+7. **`DO_REGION`** (optional) environment variable for the cluster region (default: `nyc3`):
    ```bash
-   export DO_REGION=nyc1
+   export DO_REGION=nyc3
    ```
 
 ## Example Commands

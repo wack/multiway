@@ -179,7 +179,7 @@ Options:
 
 Environment Variables:
   DO_CLUSTER_NAME       Override the cluster name
-  DO_REGION             DigitalOcean region for cluster (default: nyc1)
+  DO_REGION             DigitalOcean region for cluster (default: nyc3)
 
 Examples:
   # Start or prepare cluster for current branch
