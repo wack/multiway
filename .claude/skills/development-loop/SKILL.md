@@ -42,16 +42,30 @@ Each CSV file has the following columns:
 
 ### Step 1: Select the Next Test
 
-Scan the tier CSV files in order of priority (tier-1 first, tier-7 last) to find the first test where `implemented` is `false`.
+Use the `pick-next.sh` helper script to select and enable the next test:
 
-Once you've selected a test:
-1. Update the CSV file to change `implemented` from `false` to `in-progress`
-2. Record the test name and its description for reference
+```bash
+# See what test is next without enabling it
+./pick-next.sh --show-next
 
-**Example:**
-```csv
-HTTPRouteSimpleSameNamespace,Basic HTTP routing...,in-progress
+# Enable the next test (removes t.Skip() and marks as in-progress)
+./pick-next.sh
 ```
+
+The script will:
+1. Scan tier CSV files in priority order (tier-1 first, tier-7 last)
+2. Find the first test where `implemented` is `false` or `in-progress`
+3. If `false`, enable the test by removing `t.Skip()` from the conformance suite
+4. Update the CSV status to `in-progress`
+
+**IMPORTANT**: After running `pick-next.sh`, you MUST inform the user which test was selected by clearly stating:
+- The **test name** (e.g., `HTTPRouteSimpleSameNamespace`)
+- The **test description** (e.g., "Basic HTTP routing from a route to a backend service in the same namespace")
+
+This ensures the user understands what functionality is being implemented in this iteration.
+
+**Example output to user:**
+> The next test to implement is **HTTPRouteSimpleSameNamespace**: Basic HTTP routing from a route to a backend service in the same namespace. This is the foundation of all routing functionality.
 
 ### Step 2: Verify Test is Currently Skipped
 
@@ -225,8 +239,69 @@ If you encounter issues:
 - **Multiple tests failing**: Address failing tests before enabling new ones
 - **Stuck on a test**: Document findings, mark as `in-progress`, and consider moving to the next test with a note
 
+## Helper Script: pick-next.sh
+
+A helper script is provided to automate common development loop tasks:
+
+```bash
+# Location
+.claude/skills/development-loop/pick-next.sh
+```
+
+### Script Features
+
+The `pick-next.sh` script automates:
+1. **CSV Concatenation**: Combines all tier files in priority order (tier-1 first)
+2. **Next Test Selection**: Finds the first test with status `in-progress` or `false`
+3. **Test Enabling**: Uses AST-Grep to remove `t.Skip()` calls from conformance tests
+
+### Usage
+
+```bash
+# Show the next test to work on
+./pick-next.sh --show-next
+
+# Enable the next test (removes t.Skip() and updates CSV to in-progress)
+./pick-next.sh
+
+# Preview what would be done without making changes
+./pick-next.sh --dry-run
+
+# List all tests in priority order with their status
+./pick-next.sh --list-all
+
+# Show help
+./pick-next.sh --help
+```
+
+### Requirements
+
+- **GATEWAY_CONFORMANCE_SUITE**: Environment variable pointing to the Gateway API repository clone
+- **ast-grep** (optional): The script will install it via cargo if not available, or fall back to sed
+
+### Example Workflow
+
+```bash
+# 1. See what test to work on next
+./pick-next.sh --show-next
+
+# 2. Enable the test (removes t.Skip() and marks as in-progress)
+./pick-next.sh
+
+# 3. Run conformance tests to see the failure
+cd $GATEWAY_CONFORMANCE_SUITE && make conformance
+
+# 4. Implement the fix in the multiway codebase
+
+# 5. Verify the fix passes
+cd $GATEWAY_CONFORMANCE_SUITE && make conformance
+
+# 6. Manually update the CSV to mark as 'true' when complete
+```
+
 ## Files and Directories
 
+- `./pick-next.sh`: Helper script for development loop automation
 - `./test-tiers/*.csv`: Test priority lists and implementation status
 - `./bug-reports/`: Diagnostic reports for failing tests
 - `$GATEWAY_CONFORMANCE_SUITE/conformance`: The official conformance test suite
