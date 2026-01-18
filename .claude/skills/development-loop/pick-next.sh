@@ -545,8 +545,11 @@ main() {
 
     echo ""
     success "==========================================="
-    success "Test '${test_name}' is now enabled and marked as in-progress"
+    success "Test enabled and marked as in-progress"
     success "==========================================="
+    echo ""
+    echo "  Test Name:   ${test_name}"
+    echo "  Description: ${description}"
     echo ""
     info "Next steps:"
     echo "  1. Run the conformance tests to see the failure"

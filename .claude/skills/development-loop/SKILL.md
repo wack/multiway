@@ -42,16 +42,30 @@ Each CSV file has the following columns:
 
 ### Step 1: Select the Next Test
 
-Scan the tier CSV files in order of priority (tier-1 first, tier-7 last) to find the first test where `implemented` is `false`.
+Use the `pick-next.sh` helper script to select and enable the next test:
 
-Once you've selected a test:
-1. Update the CSV file to change `implemented` from `false` to `in-progress`
-2. Record the test name and its description for reference
+```bash
+# See what test is next without enabling it
+./pick-next.sh --show-next
 
-**Example:**
-```csv
-HTTPRouteSimpleSameNamespace,Basic HTTP routing...,in-progress
+# Enable the next test (removes t.Skip() and marks as in-progress)
+./pick-next.sh
 ```
+
+The script will:
+1. Scan tier CSV files in priority order (tier-1 first, tier-7 last)
+2. Find the first test where `implemented` is `false` or `in-progress`
+3. If `false`, enable the test by removing `t.Skip()` from the conformance suite
+4. Update the CSV status to `in-progress`
+
+**IMPORTANT**: After running `pick-next.sh`, you MUST inform the user which test was selected by clearly stating:
+- The **test name** (e.g., `HTTPRouteSimpleSameNamespace`)
+- The **test description** (e.g., "Basic HTTP routing from a route to a backend service in the same namespace")
+
+This ensures the user understands what functionality is being implemented in this iteration.
+
+**Example output to user:**
+> The next test to implement is **HTTPRouteSimpleSameNamespace**: Basic HTTP routing from a route to a backend service in the same namespace. This is the foundation of all routing functionality.
 
 ### Step 2: Verify Test is Currently Skipped
 
