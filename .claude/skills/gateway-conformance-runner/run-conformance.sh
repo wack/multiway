@@ -17,7 +17,7 @@
 #   ./run-conformance.sh [OPTIONS]
 #
 # Options:
-#   --dev               Use Dockerfile.dev for faster builds (lower optimization)
+#   --release           Use production Dockerfile (higher optimization, slower builds)
 #   --skip-build        Skip the Rust compilation and Docker image build steps
 #   --skip-deploy       Skip the gateway controller deployment step
 #   --cluster-name NAME Name of the cluster (default: derived from git branch)
@@ -54,7 +54,7 @@ readonly DEFAULT_EXTENDED_POD_READY_TIMEOUT="300s"
 # They control which phases of the workflow are executed and how the script
 # identifies the target cluster.
 CLUSTER_NAME=""
-DEV_BUILD=false
+DEV_BUILD=true
 SKIP_BUILD=false
 SKIP_DEPLOY=false
 DRY_RUN=false
@@ -81,7 +81,7 @@ The cluster name defaults to a sanitized version of the current git branch,
 prefixed with "${CLUSTER_NAME_PREFIX}-" (e.g., "feature/my-test" becomes "${CLUSTER_NAME_PREFIX}-feature-my-test").
 
 Options:
-  --dev               Use Dockerfile.dev for faster builds (lower optimization)
+  --release           Use production Dockerfile (higher optimization, slower builds)
   --skip-build        Skip the Rust compilation and Docker image build steps
   --skip-deploy       Skip the gateway controller deployment step
   --cluster-name NAME Name of the cluster (default: ${default_name})
@@ -136,8 +136,8 @@ parse_arguments() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --dev)
-                DEV_BUILD=true
+            --release)
+                DEV_BUILD=false
                 shift
                 ;;
             --skip-build)
