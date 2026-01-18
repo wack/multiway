@@ -17,6 +17,7 @@
 #   ./run-conformance.sh [OPTIONS]
 #
 # Options:
+#   --release           Use production Dockerfile (higher optimization, slower builds)
 #   --skip-build        Skip the Rust compilation and Docker image build steps
 #   --skip-deploy       Skip the gateway controller deployment step
 #   --cluster-name NAME Name of the cluster (default: derived from git branch)
@@ -53,6 +54,7 @@ readonly DEFAULT_EXTENDED_POD_READY_TIMEOUT="300s"
 # They control which phases of the workflow are executed and how the script
 # identifies the target cluster.
 CLUSTER_NAME=""
+DEV_BUILD=true
 SKIP_BUILD=false
 SKIP_DEPLOY=false
 DRY_RUN=false
@@ -79,6 +81,7 @@ The cluster name defaults to a sanitized version of the current git branch,
 prefixed with "${CLUSTER_NAME_PREFIX}-" (e.g., "feature/my-test" becomes "${CLUSTER_NAME_PREFIX}-feature-my-test").
 
 Options:
+  --release           Use production Dockerfile (higher optimization, slower builds)
   --skip-build        Skip the Rust compilation and Docker image build steps
   --skip-deploy       Skip the gateway controller deployment step
   --cluster-name NAME Name of the cluster (default: ${default_name})
@@ -133,6 +136,10 @@ parse_arguments() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --release)
+                DEV_BUILD=false
+                shift
+                ;;
             --skip-build)
                 SKIP_BUILD=true
                 shift
@@ -297,9 +304,15 @@ verify_rust_compiles() {
 # Builds the Docker images for control plane and data plane.
 # This is a non-recoverable operation - build failures require investigation.
 # The images are tagged for pushing to the container registry.
+# If DEV_BUILD is true, uses Dockerfile.dev for faster builds.
 #######################################
 build_docker_images() {
-    info "Building Docker images..."
+    if [[ "${DEV_BUILD}" == true ]]; then
+        info "Building Docker images (dev mode - faster builds)..."
+        export DOCKERFILE="Dockerfile.dev"
+    else
+        info "Building Docker images..."
+    fi
 
     if ! run_cmd cargo make docker-build-all; then
         error_exit "Docker image build failed. Please check the build output for errors."
@@ -313,6 +326,7 @@ build_docker_images() {
 # Unlike Kind clusters (which use `kind load docker-image` to load images
 # directly), DigitalOcean clusters must pull images from a registry. This
 # function pushes the built images so the cluster can access them.
+# If DEV_BUILD is true, uses Dockerfile.dev for faster builds.
 #######################################
 push_images_to_registry() {
     info "Pushing images to container registry..."
@@ -321,6 +335,11 @@ push_images_to_registry() {
         error_exit "DOCKER_REGISTRY environment variable is not set.
 Please set it to your container registry URL.
 Example: export DOCKER_REGISTRY=ghcr.io/myorg"
+    fi
+
+    # Ensure DOCKERFILE is set for dev builds (in case this is called independently)
+    if [[ "${DEV_BUILD}" == true ]]; then
+        export DOCKERFILE="Dockerfile.dev"
     fi
 
     if ! run_cmd cargo make do-push-images; then
@@ -576,6 +595,7 @@ main() {
     echo ""
     info "Configuration:"
     info "  Cluster name: ${CLUSTER_NAME}"
+    info "  Dev build:    ${DEV_BUILD}"
     info "  Skip build:   ${SKIP_BUILD}"
     info "  Skip deploy:  ${SKIP_DEPLOY}"
     info "  Dry run:      ${DRY_RUN}"

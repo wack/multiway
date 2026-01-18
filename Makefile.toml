@@ -427,7 +427,7 @@ script = '''
 docker build \
   --target controlplane \
   -t multiway-controlplane:latest \
-  -f Dockerfile \
+  -f "${DOCKERFILE:-Dockerfile}" \
   .
 '''
 
@@ -439,7 +439,7 @@ script = '''
 docker build \
   --target dataplane \
   -t multiway-dataplane:latest \
-  -f Dockerfile \
+  -f "${DOCKERFILE:-Dockerfile}" \
   .
 '''
 
@@ -461,7 +461,7 @@ docker buildx build \
   --target controlplane \
   --platform linux/amd64,linux/arm64 \
   -t multiway-controlplane:latest \
-  -f Dockerfile \
+  -f "${DOCKERFILE:-Dockerfile}" \
   .
 '''
 
@@ -478,7 +478,7 @@ docker buildx build \
   --target dataplane \
   --platform linux/amd64,linux/arm64 \
   -t multiway-dataplane:latest \
-  -f Dockerfile \
+  -f "${DOCKERFILE:-Dockerfile}" \
   .
 '''
 
@@ -503,7 +503,7 @@ docker buildx build \
   --target controlplane \
   --platform linux/amd64,linux/arm64 \
   -t ${DOCKER_REGISTRY}/multiway-controlplane:latest \
-  -f Dockerfile \
+  -f "${DOCKERFILE:-Dockerfile}" \
   --push \
   .
 '''
@@ -524,7 +524,7 @@ docker buildx build \
   --target dataplane \
   --platform linux/amd64,linux/arm64 \
   -t ${DOCKER_REGISTRY}/multiway-dataplane:latest \
-  -f Dockerfile \
+  -f "${DOCKERFILE:-Dockerfile}" \
   --push \
   .
 '''
