@@ -225,18 +225,18 @@ If you encounter issues:
 - **Multiple tests failing**: Address failing tests before enabling new ones
 - **Stuck on a test**: Document findings, mark as `in-progress`, and consider moving to the next test with a note
 
-## Helper Script: dev-loop.sh
+## Helper Script: pick-next.sh
 
 A helper script is provided to automate common development loop tasks:
 
 ```bash
 # Location
-.claude/skills/development-loop/dev-loop.sh
+.claude/skills/development-loop/pick-next.sh
 ```
 
 ### Script Features
 
-The `dev-loop.sh` script automates:
+The `pick-next.sh` script automates:
 1. **CSV Concatenation**: Combines all tier files in priority order (tier-1 first)
 2. **Next Test Selection**: Finds the first test with status `in-progress` or `false`
 3. **Test Enabling**: Uses AST-Grep to remove `t.Skip()` calls from conformance tests
@@ -245,19 +245,19 @@ The `dev-loop.sh` script automates:
 
 ```bash
 # Show the next test to work on
-./dev-loop.sh --show-next
+./pick-next.sh --show-next
 
 # Enable the next test (removes t.Skip() and updates CSV to in-progress)
-./dev-loop.sh
+./pick-next.sh
 
 # Preview what would be done without making changes
-./dev-loop.sh --dry-run
+./pick-next.sh --dry-run
 
 # List all tests in priority order with their status
-./dev-loop.sh --list-all
+./pick-next.sh --list-all
 
 # Show help
-./dev-loop.sh --help
+./pick-next.sh --help
 ```
 
 ### Requirements
@@ -269,10 +269,10 @@ The `dev-loop.sh` script automates:
 
 ```bash
 # 1. See what test to work on next
-./dev-loop.sh --show-next
+./pick-next.sh --show-next
 
 # 2. Enable the test (removes t.Skip() and marks as in-progress)
-./dev-loop.sh
+./pick-next.sh
 
 # 3. Run conformance tests to see the failure
 cd $GATEWAY_CONFORMANCE_SUITE && make conformance
@@ -287,7 +287,7 @@ cd $GATEWAY_CONFORMANCE_SUITE && make conformance
 
 ## Files and Directories
 
-- `./dev-loop.sh`: Helper script for development loop automation
+- `./pick-next.sh`: Helper script for development loop automation
 - `./test-tiers/*.csv`: Test priority lists and implementation status
 - `./bug-reports/`: Diagnostic reports for failing tests
 - `$GATEWAY_CONFORMANCE_SUITE/conformance`: The official conformance test suite

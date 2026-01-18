@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# dev-loop.sh
+# pick-next.sh
 #
 # Development loop helper script for implementing Gateway API conformance tests.
 # This script:
@@ -9,7 +9,7 @@
 #   3. If status is "false", enables the test by removing t.Skip() from the conformance suite
 #
 # Usage:
-#   ./dev-loop.sh [OPTIONS]
+#   ./pick-next.sh [OPTIONS]
 #
 # Options:
 #   --dry-run           Print what would be done without making changes
@@ -87,7 +87,7 @@ error_exit() {
 
 show_help() {
     cat << 'EOF'
-Usage: dev-loop.sh [OPTIONS]
+Usage: pick-next.sh [OPTIONS]
 
 Development loop helper for Gateway API conformance test implementation.
 
@@ -107,16 +107,16 @@ Environment Variables:
 
 Examples:
   # Show the next test to implement
-  ./dev-loop.sh --show-next
+  ./pick-next.sh --show-next
 
   # Enable the next test (remove t.Skip())
-  ./dev-loop.sh
+  ./pick-next.sh
 
   # See what would be done without making changes
-  ./dev-loop.sh --dry-run
+  ./pick-next.sh --dry-run
 
   # List all tests with their current status
-  ./dev-loop.sh --list-all
+  ./pick-next.sh --list-all
 EOF
     exit 0
 }
@@ -519,7 +519,7 @@ main() {
     # Handle --show-next option
     if [[ "${SHOW_NEXT}" == true ]]; then
         if [[ "${status}" == "false" ]]; then
-            info "To enable this test, run: ./dev-loop.sh"
+            info "To enable this test, run: ./pick-next.sh"
         elif [[ "${status}" == "in-progress" ]]; then
             info "This test is already in-progress. Continue working on it."
         fi
