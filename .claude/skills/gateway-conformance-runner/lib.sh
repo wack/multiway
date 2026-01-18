@@ -78,7 +78,7 @@ readonly LIB_COLOR_RESET='\033[0m'
 #   $1 - The message to print
 #######################################
 info() {
-    local readonly message="$1"
+    local -r message="$1"
     echo -e "${COLOR_BLUE}[INFO]${COLOR_RESET} ${message}"
 }
 
@@ -89,7 +89,7 @@ info() {
 #   $1 - The message to print
 #######################################
 success() {
-    local readonly message="$1"
+    local -r message="$1"
     echo -e "${COLOR_GREEN}[OK]${COLOR_RESET} ${message}"
 }
 
@@ -100,7 +100,7 @@ success() {
 #   $1 - The message to print
 #######################################
 warn() {
-    local readonly message="$1"
+    local -r message="$1"
     echo -e "${COLOR_YELLOW}[WARN]${COLOR_RESET} ${message}"
 }
 
@@ -112,7 +112,7 @@ warn() {
 #   $1 - The error message to print
 #######################################
 error_exit() {
-    local readonly message="$1"
+    local -r message="$1"
     echo -e "${COLOR_RED}[ERROR]${COLOR_RESET} ${message}" >&2
     exit 1
 }
@@ -180,10 +180,13 @@ sanitize_cluster_name() {
     name=$(echo "$name" | tr '[:upper:]' '[:lower:]')
 
     # Replace non-alphanumeric characters with hyphens
-    name=$(echo "$name" | sed 's/[^a-z0-9]/-/g')
+    name="${name//[^a-z0-9]/-}"
 
     # Collapse multiple consecutive hyphens into one
-    name=$(echo "$name" | sed 's/-\+/-/g')
+    # Using extglob for this pattern
+    shopt -s extglob
+    name="${name//+(-)/\-}"
+    shopt -u extglob
 
     # Remove leading and trailing hyphens
     name=$(echo "$name" | sed 's/^-//;s/-$//')
@@ -289,6 +292,6 @@ check_docker_running() {
 #   0 if the cluster exists, 1 otherwise
 #######################################
 do_cluster_exists() {
-    local readonly cluster_name="$1"
+    local -r cluster_name="$1"
     doctl kubernetes cluster list --format Name --no-header 2>/dev/null | grep -q "^${cluster_name}$"
 }

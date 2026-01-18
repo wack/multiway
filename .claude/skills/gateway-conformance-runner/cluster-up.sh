@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091  # lib.sh is sourced at runtime from SCRIPT_DIR
 #
 # cluster-up.sh
 #

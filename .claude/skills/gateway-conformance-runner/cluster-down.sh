@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091  # lib.sh is sourced at runtime from SCRIPT_DIR
 #
 # cluster-down.sh
 #
@@ -145,7 +146,7 @@ check_prerequisites() {
 # Returns the context name via stdout, or empty string if not found.
 #######################################
 get_kubectl_context_name() {
-    local readonly cluster_name="$1"
+    local -r cluster_name="$1"
     kubectl config get-contexts -o name 2>/dev/null | grep "${cluster_name}" | head -1 || echo ""
 }
 

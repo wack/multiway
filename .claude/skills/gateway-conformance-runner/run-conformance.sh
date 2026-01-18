@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091  # lib.sh is sourced at runtime from SCRIPT_DIR
 #
 # run-conformance.sh
 #
@@ -256,7 +257,7 @@ Please clone the Gateway API repository:
     fi
 
     # Verify the conformance directory exists within the repository
-    local readonly conformance_dir="${GATEWAY_CONFORMANCE_SUITE}/conformance"
+    local -r conformance_dir="${GATEWAY_CONFORMANCE_SUITE}/conformance"
     if [[ ! -d "${conformance_dir}" ]]; then
         error_exit "Conformance directory not found at: ${conformance_dir}
 
@@ -364,7 +365,7 @@ build_and_push_images() {
 # Used to determine if cleanup is needed before deployment.
 #######################################
 namespace_exists() {
-    local readonly ns="$1"
+    local -r ns="$1"
     kubectl get namespace "${ns}" &>/dev/null
 }
 
@@ -547,7 +548,7 @@ run_conformance_tests() {
     (
         cd "${GATEWAY_CONFORMANCE_SUITE}" && make conformance
     )
-    local readonly test_exit_code=$?
+    local -r test_exit_code=$?
     set -e
 
     echo ""
