@@ -47,6 +47,9 @@ readonly COLOR_RESET='\033[0m'
 # GLOBAL STATE
 # =============================================================================
 
+# These variables are set by parse_arguments() and used throughout the script.
+# They control which phases of the workflow are executed and how the script
+# identifies the target cluster.
 CLUSTER_NAME=""
 SKIP_BUILD=false
 SKIP_DEPLOY=false
@@ -220,6 +223,11 @@ EOF
 # Parses command-line arguments and sets global configuration variables.
 # Arguments:
 #   $@ - All command-line arguments passed to the script
+# Globals:
+#   CLUSTER_NAME - Set to the specified, environment, or branch-derived cluster name
+#   SKIP_BUILD   - Set to true if --skip-build is provided
+#   SKIP_DEPLOY  - Set to true if --skip-deploy is provided
+#   DRY_RUN      - Set to true if --dry-run is provided
 #######################################
 parse_arguments() {
     # Default to environment variable, then git branch-based name
@@ -261,11 +269,17 @@ parse_arguments() {
 }
 
 # =============================================================================
-# PREREQUISITE CHECKS
+# PREREQUISITE CHECKS (Non-recoverable)
+#
+# These checks verify that the local development environment is properly
+# configured. Failures here require manual intervention - the script cannot
+# automatically recover from missing tools or a stopped Docker daemon.
 # =============================================================================
 
 #######################################
 # Verifies that the Docker daemon is running.
+# This is a non-recoverable check - if Docker is not running, the script exits.
+# Docker is required for building container images.
 #######################################
 check_docker_running() {
     info "Checking if Docker is running..."
@@ -279,6 +293,8 @@ check_docker_running() {
 
 #######################################
 # Verifies that kubectl is installed and available in PATH.
+# This is a non-recoverable check - kubectl must be installed manually.
+# kubectl is required for deploying to and interacting with the cluster.
 #######################################
 check_kubectl_available() {
     info "Checking if kubectl is available..."
@@ -293,6 +309,9 @@ See: https://kubernetes.io/docs/tasks/tools/install-kubectl/"
 
 #######################################
 # Verifies that the Kubernetes cluster is accessible.
+# This check confirms we can communicate with the cluster after the context
+# has been set up by cluster-up.sh. Unlike Kind clusters which are local,
+# DigitalOcean clusters require network connectivity and valid credentials.
 #######################################
 verify_cluster_accessible() {
     info "Verifying cluster is accessible..."
@@ -320,7 +339,9 @@ If the cluster is running, check your kubectl context with:
 }
 
 #######################################
-# Runs all prerequisite checks.
+# Runs all prerequisite checks that are non-recoverable.
+# If any check fails, the script will exit with an error message explaining
+# what needs to be fixed before the script can proceed.
 #######################################
 check_prerequisites() {
     info "=== Phase: Prerequisites ==="
@@ -334,16 +355,23 @@ check_prerequisites() {
 }
 
 # =============================================================================
-# ENVIRONMENT VERIFICATION
+# ENVIRONMENT VERIFICATION (Non-recoverable)
+#
+# These checks verify that required environment variables are set and point
+# to valid locations. The user must configure these manually before running
+# the conformance tests.
 # =============================================================================
 
 #######################################
 # Verifies that the GATEWAY_CONFORMANCE_SUITE environment variable is set
 # and points to a valid Gateway API repository with a conformance directory.
+# This is non-recoverable - the user must configure this manually by cloning
+# the Gateway API repository and setting the environment variable.
 #######################################
 verify_conformance_suite_env() {
     info "=== Phase: Environment Verification ==="
 
+    # Check if the environment variable is set
     if [[ -z "${GATEWAY_CONFORMANCE_SUITE:-}" ]]; then
         error_exit "GATEWAY_CONFORMANCE_SUITE environment variable is not set.
 
@@ -355,6 +383,7 @@ The path should point to the root of the Gateway API repository clone."
 
     info "GATEWAY_CONFORMANCE_SUITE is set to: ${GATEWAY_CONFORMANCE_SUITE}"
 
+    # Verify the path exists
     if [[ ! -d "${GATEWAY_CONFORMANCE_SUITE}" ]]; then
         error_exit "GATEWAY_CONFORMANCE_SUITE path does not exist: ${GATEWAY_CONFORMANCE_SUITE}
 
@@ -362,6 +391,7 @@ Please clone the Gateway API repository:
     git clone https://github.com/kubernetes-sigs/gateway-api.git ${GATEWAY_CONFORMANCE_SUITE}"
     fi
 
+    # Verify the conformance directory exists within the repository
     local readonly conformance_dir="${GATEWAY_CONFORMANCE_SUITE}/conformance"
     if [[ ! -d "${conformance_dir}" ]]; then
         error_exit "Conformance directory not found at: ${conformance_dir}
@@ -376,10 +406,17 @@ not the conformance subdirectory. The repository should contain a 'conformance/'
 
 # =============================================================================
 # BUILD AND PUSH IMAGES
+#
+# This phase compiles the Rust code, builds Docker images, and pushes them
+# to the container registry. Unlike Kind (which loads images directly into
+# the cluster), DigitalOcean clusters pull images from a registry, so we
+# must push images before they can be deployed.
 # =============================================================================
 
 #######################################
 # Verifies that the Rust project compiles successfully.
+# This is a non-recoverable check - compilation errors require code fixes.
+# We run this before building Docker images to fail fast on code errors.
 #######################################
 verify_rust_compiles() {
     info "Verifying Rust project compiles..."
@@ -393,6 +430,8 @@ verify_rust_compiles() {
 
 #######################################
 # Builds the Docker images for control plane and data plane.
+# This is a non-recoverable operation - build failures require investigation.
+# The images are tagged for pushing to the container registry.
 #######################################
 build_docker_images() {
     info "Building Docker images..."
@@ -406,6 +445,9 @@ build_docker_images() {
 
 #######################################
 # Pushes Docker images to the container registry.
+# Unlike Kind clusters (which use `kind load docker-image` to load images
+# directly), DigitalOcean clusters must pull images from a registry. This
+# function pushes the built images so the cluster can access them.
 #######################################
 push_images_to_registry() {
     info "Pushing images to container registry..."
@@ -425,6 +467,8 @@ Example: export DOCKER_REGISTRY=ghcr.io/myorg"
 
 #######################################
 # Orchestrates the build and image push phase.
+# Can be skipped with --skip-build flag for faster iteration when images
+# have already been built and pushed (e.g., when only re-running tests).
 #######################################
 build_and_push_images() {
     info "=== Phase: Build and Push Images ==="
@@ -444,11 +488,16 @@ build_and_push_images() {
 }
 
 # =============================================================================
-# DEPLOY GATEWAY COMPONENTS
+# DEPLOY GATEWAY COMPONENTS (Recoverable)
+#
+# This phase deploys the gateway controller to the Kubernetes cluster. Most
+# operations here are recoverable - if something exists from a previous run,
+# we clean it up and start fresh. This ensures a clean state for each test run.
 # =============================================================================
 
 #######################################
 # Checks if the gateway namespace exists in the cluster.
+# Used to determine if cleanup is needed before deployment.
 #######################################
 namespace_exists() {
     local readonly ns="$1"
@@ -457,6 +506,9 @@ namespace_exists() {
 
 #######################################
 # Cleans up any existing gateway deployments by deleting the namespace.
+# This is a recoverable operation - we delete the namespace to ensure a
+# clean slate for the new deployment. Deleting the namespace removes all
+# resources within it (deployments, services, configmaps, etc.).
 #######################################
 cleanup_existing_deployment() {
     info "Cleaning up existing deployments in namespace '${DEFAULT_NAMESPACE}'..."
@@ -490,6 +542,8 @@ cleanup_existing_deployment() {
 
 #######################################
 # Creates a fresh namespace for the gateway components.
+# The namespace isolates the gateway resources from other workloads in the
+# cluster and makes cleanup straightforward (delete the namespace).
 #######################################
 create_fresh_namespace() {
     info "Creating fresh namespace '${DEFAULT_NAMESPACE}'..."
@@ -509,6 +563,9 @@ create_fresh_namespace() {
 
 #######################################
 # Installs or updates the Gateway API CRDs in the cluster.
+# CRDs (Custom Resource Definitions) must be installed before deploying
+# resources that use them. This is idempotent - running it multiple times
+# is safe and will update CRDs if the definitions have changed.
 #######################################
 install_gateway_api_crds() {
     info "Installing Gateway API CRDs..."
@@ -522,6 +579,8 @@ install_gateway_api_crds() {
 
 #######################################
 # Deploys the gateway controller to the cluster.
+# This applies the Kubernetes manifests that define the controller deployment,
+# RBAC permissions, and related resources.
 #######################################
 deploy_gateway_controller() {
     info "Deploying gateway controller..."
@@ -535,6 +594,9 @@ deploy_gateway_controller() {
 
 #######################################
 # Waits for the gateway controller pods to become ready.
+# Pods may take time to start due to image pulling, resource allocation,
+# or initialization logic. We wait with an initial timeout and extend it
+# if needed, providing diagnostic information if pods fail to start.
 #######################################
 wait_for_controller_ready() {
     info "Waiting for controller pods to be ready..."
@@ -567,6 +629,8 @@ Please check the pod logs for errors:
 
 #######################################
 # Orchestrates the gateway component deployment phase.
+# Can be skipped with --skip-deploy flag when the controller is already
+# deployed and you only want to re-run the conformance tests.
 #######################################
 deploy_gateway_components() {
     info "=== Phase: Deploy Gateway Components ==="
@@ -589,11 +653,20 @@ deploy_gateway_components() {
 
 # =============================================================================
 # RUN CONFORMANCE TESTS
+#
+# This phase runs the official Gateway API conformance test suite against
+# the deployed gateway controller. Test failures are expected during
+# development and are reported as warnings rather than causing the script
+# to exit with an error.
 # =============================================================================
 
 #######################################
 # Runs the Gateway API conformance test suite from the local repository.
 # Test failures are expected output and do not cause the script to fail.
+# The conformance tests are run from the Gateway API repository clone,
+# which must be configured via the GATEWAY_CONFORMANCE_SUITE environment
+# variable. We capture the exit code to report pass/fail status but allow
+# the script to complete even if tests fail.
 #######################################
 run_conformance_tests() {
     info "=== Phase: Run Conformance Tests ==="
