@@ -26,22 +26,23 @@
 set -euo pipefail
 
 # =============================================================================
+# LOAD SHARED LIBRARY
+# =============================================================================
+
+# Source the shared library of functions. This provides logging functions,
+# command execution utilities, cluster name helpers, and CLI tool checks.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib.sh"
+
+# =============================================================================
 # CONFIGURATION
 # =============================================================================
 
+# Script-specific constants for gateway deployment and pod management.
 readonly DEFAULT_NAMESPACE="multiway-system"
 readonly DEFAULT_POD_LABEL="app.kubernetes.io/name=multiway"
 readonly DEFAULT_POD_READY_TIMEOUT="120s"
 readonly DEFAULT_EXTENDED_POD_READY_TIMEOUT="300s"
-readonly CLUSTER_NAME_PREFIX="mw"
-readonly MAX_CLUSTER_NAME_LENGTH=63
-
-# Color codes for output formatting
-readonly COLOR_RED='\033[0;31m'
-readonly COLOR_GREEN='\033[0;32m'
-readonly COLOR_YELLOW='\033[0;33m'
-readonly COLOR_BLUE='\033[0;34m'
-readonly COLOR_RESET='\033[0m'
 
 # =============================================================================
 # GLOBAL STATE
@@ -56,116 +57,8 @@ SKIP_DEPLOY=false
 DRY_RUN=false
 
 # =============================================================================
-# UTILITY FUNCTIONS
+# SCRIPT-SPECIFIC FUNCTIONS
 # =============================================================================
-
-#######################################
-# Prints an informational message in blue.
-# Arguments:
-#   $1 - The message to print
-#######################################
-info() {
-    local readonly message="$1"
-    echo -e "${COLOR_BLUE}[INFO]${COLOR_RESET} ${message}"
-}
-
-#######################################
-# Prints a success message in green.
-# Arguments:
-#   $1 - The message to print
-#######################################
-success() {
-    local readonly message="$1"
-    echo -e "${COLOR_GREEN}[OK]${COLOR_RESET} ${message}"
-}
-
-#######################################
-# Prints a warning message in yellow.
-# Arguments:
-#   $1 - The message to print
-#######################################
-warn() {
-    local readonly message="$1"
-    echo -e "${COLOR_YELLOW}[WARN]${COLOR_RESET} ${message}"
-}
-
-#######################################
-# Prints an error message in red and exits with code 1.
-# Arguments:
-#   $1 - The error message to print
-#######################################
-error_exit() {
-    local readonly message="$1"
-    echo -e "${COLOR_RED}[ERROR]${COLOR_RESET} ${message}" >&2
-    exit 1
-}
-
-#######################################
-# Executes a command, or prints it if in dry-run mode.
-# Arguments:
-#   $@ - The command and its arguments to execute
-# Returns:
-#   The exit code of the command (0 in dry-run mode)
-#######################################
-run_cmd() {
-    if [[ "${DRY_RUN}" == true ]]; then
-        echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} $*"
-        return 0
-    else
-        "$@"
-    fi
-}
-
-#######################################
-# Sanitizes a string for use as a DigitalOcean cluster name.
-# - Converts to lowercase
-# - Replaces non-alphanumeric characters with hyphens
-# - Removes leading/trailing hyphens
-# - Collapses multiple consecutive hyphens
-# - Truncates to max length
-# Arguments:
-#   $1 - The string to sanitize
-# Outputs:
-#   The sanitized string
-#######################################
-sanitize_cluster_name() {
-    local name="$1"
-
-    # Convert to lowercase
-    name=$(echo "$name" | tr '[:upper:]' '[:lower:]')
-
-    # Replace non-alphanumeric characters with hyphens
-    name=$(echo "$name" | sed 's/[^a-z0-9]/-/g')
-
-    # Collapse multiple consecutive hyphens into one
-    name=$(echo "$name" | sed 's/-\+/-/g')
-
-    # Remove leading and trailing hyphens
-    name=$(echo "$name" | sed 's/^-//;s/-$//')
-
-    # Truncate to max length
-    echo "${name:0:${MAX_CLUSTER_NAME_LENGTH}}"
-}
-
-#######################################
-# Gets the default cluster name based on the current git branch.
-# Falls back to "local" if not in a git repository.
-# Outputs:
-#   The cluster name with prefix (e.g., "mw-feature-my-branch")
-#######################################
-get_default_cluster_name() {
-    local branch_name
-
-    # Try to get the current git branch
-    if branch_name=$(git rev-parse --abbrev-ref HEAD 2>/dev/null); then
-        local sanitized
-        sanitized=$(sanitize_cluster_name "$branch_name")
-        echo "${CLUSTER_NAME_PREFIX}-${sanitized}"
-    else
-        # Not in a git repo, use fallback
-        echo "${CLUSTER_NAME_PREFIX}-local"
-    fi
-}
 
 #######################################
 # Prints the help message and exits.
@@ -274,38 +167,9 @@ parse_arguments() {
 # These checks verify that the local development environment is properly
 # configured. Failures here require manual intervention - the script cannot
 # automatically recover from missing tools or a stopped Docker daemon.
+#
+# Note: check_docker_running and check_kubectl_available are provided by lib.sh
 # =============================================================================
-
-#######################################
-# Verifies that the Docker daemon is running.
-# This is a non-recoverable check - if Docker is not running, the script exits.
-# Docker is required for building container images.
-#######################################
-check_docker_running() {
-    info "Checking if Docker is running..."
-
-    if ! docker info &>/dev/null; then
-        error_exit "Docker is not running. Please start the Docker daemon and try again."
-    fi
-
-    success "Docker is running"
-}
-
-#######################################
-# Verifies that kubectl is installed and available in PATH.
-# This is a non-recoverable check - kubectl must be installed manually.
-# kubectl is required for deploying to and interacting with the cluster.
-#######################################
-check_kubectl_available() {
-    info "Checking if kubectl is available..."
-
-    if ! command -v kubectl &>/dev/null; then
-        error_exit "kubectl is not installed. Please install kubectl and try again.
-See: https://kubernetes.io/docs/tasks/tools/install-kubectl/"
-    fi
-
-    success "kubectl is available"
-}
 
 #######################################
 # Verifies that the Kubernetes cluster is accessible.
