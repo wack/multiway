@@ -225,8 +225,69 @@ If you encounter issues:
 - **Multiple tests failing**: Address failing tests before enabling new ones
 - **Stuck on a test**: Document findings, mark as `in-progress`, and consider moving to the next test with a note
 
+## Helper Script: dev-loop.sh
+
+A helper script is provided to automate common development loop tasks:
+
+```bash
+# Location
+.claude/skills/development-loop/dev-loop.sh
+```
+
+### Script Features
+
+The `dev-loop.sh` script automates:
+1. **CSV Concatenation**: Combines all tier files in priority order (tier-1 first)
+2. **Next Test Selection**: Finds the first test with status `in-progress` or `false`
+3. **Test Enabling**: Uses AST-Grep to remove `t.Skip()` calls from conformance tests
+
+### Usage
+
+```bash
+# Show the next test to work on
+./dev-loop.sh --show-next
+
+# Enable the next test (removes t.Skip() and updates CSV to in-progress)
+./dev-loop.sh
+
+# Preview what would be done without making changes
+./dev-loop.sh --dry-run
+
+# List all tests in priority order with their status
+./dev-loop.sh --list-all
+
+# Show help
+./dev-loop.sh --help
+```
+
+### Requirements
+
+- **GATEWAY_CONFORMANCE_SUITE**: Environment variable pointing to the Gateway API repository clone
+- **ast-grep** (optional): The script will install it via cargo if not available, or fall back to sed
+
+### Example Workflow
+
+```bash
+# 1. See what test to work on next
+./dev-loop.sh --show-next
+
+# 2. Enable the test (removes t.Skip() and marks as in-progress)
+./dev-loop.sh
+
+# 3. Run conformance tests to see the failure
+cd $GATEWAY_CONFORMANCE_SUITE && make conformance
+
+# 4. Implement the fix in the multiway codebase
+
+# 5. Verify the fix passes
+cd $GATEWAY_CONFORMANCE_SUITE && make conformance
+
+# 6. Manually update the CSV to mark as 'true' when complete
+```
+
 ## Files and Directories
 
+- `./dev-loop.sh`: Helper script for development loop automation
 - `./test-tiers/*.csv`: Test priority lists and implementation status
 - `./bug-reports/`: Diagnostic reports for failing tests
 - `$GATEWAY_CONFORMANCE_SUITE/conformance`: The official conformance test suite
