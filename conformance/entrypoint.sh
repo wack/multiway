@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2086  # Intentional word splitting for ARGS
 set -e
 
 echo "=== Gateway API Conformance Test Runner ==="
