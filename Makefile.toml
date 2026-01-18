@@ -116,7 +116,7 @@ args = [
 [tasks.do-create]
 description = "Create a DigitalOcean Kubernetes cluster for Gateway testing"
 category = "Kubernetes"
-script_runner = "@shell"
+script_runner = "bash"
 script = '''
 set -e
 CLUSTER_NAME="${DO_CLUSTER_NAME:-multiway-local}"
@@ -143,7 +143,7 @@ doctl kubernetes cluster kubeconfig save "${CLUSTER_NAME}"
 [tasks.do-delete]
 description = "Delete the DigitalOcean Kubernetes cluster"
 category = "Kubernetes"
-script_runner = "@shell"
+script_runner = "bash"
 script = '''
 CLUSTER_NAME="${DO_CLUSTER_NAME:-multiway-local}"
 echo "Deleting DigitalOcean Kubernetes cluster: ${CLUSTER_NAME}"
@@ -159,7 +159,7 @@ args = ["kubernetes", "cluster", "list"]
 [tasks.do-use]
 description = "Set kubectl context to the DigitalOcean cluster"
 category = "Kubernetes"
-script_runner = "@shell"
+script_runner = "bash"
 script = '''
 CLUSTER_NAME="${DO_CLUSTER_NAME:-multiway-local}"
 echo "Saving kubeconfig for cluster: ${CLUSTER_NAME}"
@@ -170,7 +170,7 @@ doctl kubernetes cluster kubeconfig save "${CLUSTER_NAME}"
 description = "Push control plane and data plane images to container registry"
 category = "Kubernetes"
 dependencies = ["docker-build-all"]
-script_runner = "@shell"
+script_runner = "bash"
 script = '''
 set -e
 if [ -z "$DOCKER_REGISTRY" ]; then
