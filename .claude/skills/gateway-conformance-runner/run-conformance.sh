@@ -1,147 +1,109 @@
 #!/usr/bin/env bash
 #
-# run-conformance-local.sh
+# run-conformance.sh
 #
-# Runs the Gateway API conformance test suite locally against a Kind cluster.
-# This script handles environment setup, cluster creation, image building,
-# deployment, and test execution with automatic recovery where possible.
+# Runs the Gateway API conformance test suite against a DigitalOcean Kubernetes cluster.
+# This script handles image building, deployment, and test execution.
+#
+# IMPORTANT: This script assumes the cluster is already running. Use cluster-up.sh
+# to start the cluster before running this script, and cluster-down.sh to stop it
+# when finished.
+#
+# The cluster name defaults to a sanitized version of the current git branch,
+# prefixed with "mw-" (e.g., branch "feature/my-test" becomes "mw-feature-my-test").
 #
 # Usage:
-#   ./scripts/run-conformance-local.sh [OPTIONS]
+#   ./run-conformance.sh [OPTIONS]
 #
 # Options:
-#   --skip-build      Skip the Rust compilation and Docker image build steps
-#   --skip-deploy     Skip the gateway controller deployment step
-#   --cluster-name    Name of the Kind cluster (default: multiway-local)
-#   --dry-run         Print commands without executing them
-#   --help            Show this help message
+#   --skip-build        Skip the Rust compilation and Docker image build steps
+#   --skip-deploy       Skip the gateway controller deployment step
+#   --cluster-name NAME Name of the cluster (default: derived from git branch)
+#   --dry-run           Print commands without executing them
+#   --help              Show this help message
 #
 
 set -euo pipefail
 
 # =============================================================================
+# LOAD SHARED LIBRARY
+# =============================================================================
+
+# Source the shared library of functions. This provides logging functions,
+# command execution utilities, cluster name helpers, and CLI tool checks.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib.sh"
+
+# =============================================================================
 # CONFIGURATION
 # =============================================================================
 
-# Default configuration values (can be overridden via command-line arguments)
-readonly DEFAULT_CLUSTER_NAME="multiway-local"
+# Script-specific constants for gateway deployment and pod management.
 readonly DEFAULT_NAMESPACE="multiway-system"
 readonly DEFAULT_POD_LABEL="app.kubernetes.io/name=multiway"
 readonly DEFAULT_POD_READY_TIMEOUT="120s"
 readonly DEFAULT_EXTENDED_POD_READY_TIMEOUT="300s"
 
-# Color codes for output formatting
-readonly COLOR_RED='\033[0;31m'
-readonly COLOR_GREEN='\033[0;32m'
-readonly COLOR_YELLOW='\033[0;33m'
-readonly COLOR_BLUE='\033[0;34m'
-readonly COLOR_RESET='\033[0m'
-
 # =============================================================================
 # GLOBAL STATE
 # =============================================================================
 
-# These variables are set by parse_arguments() and used throughout the script
+# These variables are set by parse_arguments() and used throughout the script.
+# They control which phases of the workflow are executed and how the script
+# identifies the target cluster.
 CLUSTER_NAME=""
 SKIP_BUILD=false
 SKIP_DEPLOY=false
 DRY_RUN=false
 
 # =============================================================================
-# UTILITY FUNCTIONS
+# SCRIPT-SPECIFIC FUNCTIONS
 # =============================================================================
-
-#######################################
-# Prints an informational message in blue.
-# Arguments:
-#   $1 - The message to print
-#######################################
-info() {
-    local readonly message="$1"
-    echo -e "${COLOR_BLUE}[INFO]${COLOR_RESET} ${message}"
-}
-
-#######################################
-# Prints a success message in green.
-# Arguments:
-#   $1 - The message to print
-#######################################
-success() {
-    local readonly message="$1"
-    echo -e "${COLOR_GREEN}[OK]${COLOR_RESET} ${message}"
-}
-
-#######################################
-# Prints a warning message in yellow.
-# Arguments:
-#   $1 - The message to print
-#######################################
-warn() {
-    local readonly message="$1"
-    echo -e "${COLOR_YELLOW}[WARN]${COLOR_RESET} ${message}"
-}
-
-#######################################
-# Prints an error message in red and exits with code 1.
-# Arguments:
-#   $1 - The error message to print
-#######################################
-error_exit() {
-    local readonly message="$1"
-    echo -e "${COLOR_RED}[ERROR]${COLOR_RESET} ${message}" >&2
-    exit 1
-}
-
-#######################################
-# Executes a command, or prints it if in dry-run mode.
-# Arguments:
-#   $@ - The command and its arguments to execute
-# Returns:
-#   The exit code of the command (0 in dry-run mode)
-#######################################
-run_cmd() {
-    if [[ "${DRY_RUN}" == true ]]; then
-        echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} $*"
-        return 0
-    else
-        "$@"
-    fi
-}
 
 #######################################
 # Prints the help message and exits.
 #######################################
 show_help() {
+    local default_name
+    default_name=$(get_default_cluster_name)
+
     cat << EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Runs the Gateway API conformance test suite locally against a Kind cluster.
+Runs the Gateway API conformance test suite against a DigitalOcean Kubernetes cluster.
+
+IMPORTANT: The cluster must already be running. Use cluster-up.sh to start it first.
+
+The cluster name defaults to a sanitized version of the current git branch,
+prefixed with "${CLUSTER_NAME_PREFIX}-" (e.g., "feature/my-test" becomes "${CLUSTER_NAME_PREFIX}-feature-my-test").
 
 Options:
-  --skip-build      Skip the Rust compilation and Docker image build steps
-  --skip-deploy     Skip the gateway controller deployment step
-  --cluster-name    Name of the Kind cluster (default: ${DEFAULT_CLUSTER_NAME})
-  --dry-run         Print commands without executing them
-  --help            Show this help message
+  --skip-build        Skip the Rust compilation and Docker image build steps
+  --skip-deploy       Skip the gateway controller deployment step
+  --cluster-name NAME Name of the cluster (default: ${default_name})
+  --dry-run           Print commands without executing them
+  --help              Show this help message
 
 Environment Variables:
   GATEWAY_CONFORMANCE_SUITE   Path to the Gateway API repository root (required)
+  DOCKER_REGISTRY             Container registry URL (required for build, e.g., ghcr.io/myorg)
+  DO_CLUSTER_NAME             Override the cluster name
 
 Examples:
   # Run full conformance test workflow
-  ./scripts/run-conformance-local.sh
+  ./run-conformance.sh
 
   # Skip building if images already exist
-  ./scripts/run-conformance-local.sh --skip-build
+  ./run-conformance.sh --skip-build
 
   # Skip both build and deploy (just run tests)
-  ./scripts/run-conformance-local.sh --skip-build --skip-deploy
+  ./run-conformance.sh --skip-build --skip-deploy
 
-  # Use a different cluster name
-  ./scripts/run-conformance-local.sh --cluster-name my-test-cluster
+  # Use a specific cluster name
+  ./run-conformance.sh --cluster-name my-test-cluster
 
   # See what commands would be run without executing them
-  ./scripts/run-conformance-local.sh --dry-run
+  ./run-conformance.sh --dry-run
 EOF
     exit 0
 }
@@ -155,13 +117,18 @@ EOF
 # Arguments:
 #   $@ - All command-line arguments passed to the script
 # Globals:
-#   CLUSTER_NAME - Set to the specified or default cluster name
+#   CLUSTER_NAME - Set to the specified, environment, or branch-derived cluster name
 #   SKIP_BUILD   - Set to true if --skip-build is provided
 #   SKIP_DEPLOY  - Set to true if --skip-deploy is provided
 #   DRY_RUN      - Set to true if --dry-run is provided
 #######################################
 parse_arguments() {
-    CLUSTER_NAME="${DEFAULT_CLUSTER_NAME}"
+    # Default to environment variable, then git branch-based name
+    if [[ -n "${DO_CLUSTER_NAME:-}" ]]; then
+        CLUSTER_NAME="${DO_CLUSTER_NAME}"
+    else
+        CLUSTER_NAME=$(get_default_cluster_name)
+    fi
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -196,62 +163,56 @@ parse_arguments() {
 
 # =============================================================================
 # PREREQUISITE CHECKS (Non-recoverable)
+#
+# These checks verify that the local development environment is properly
+# configured. Failures here require manual intervention - the script cannot
+# automatically recover from missing tools or a stopped Docker daemon.
+#
+# Note: check_docker_running and check_kubectl_available are provided by lib.sh
 # =============================================================================
 
 #######################################
-# Verifies that the Docker daemon is running.
-# This is a non-recoverable check - if Docker is not running, the script exits.
+# Verifies that the Kubernetes cluster is accessible.
+# This check confirms we can communicate with the cluster after the context
+# has been set up by cluster-up.sh. Unlike Kind clusters which are local,
+# DigitalOcean clusters require network connectivity and valid credentials.
 #######################################
-check_docker_running() {
-    info "Checking if Docker is running..."
+verify_cluster_accessible() {
+    info "Verifying cluster is accessible..."
 
-    if ! docker info &>/dev/null; then
-        error_exit "Docker is not running. Please start the Docker daemon and try again."
+    if [[ "${DRY_RUN}" == true ]]; then
+        echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} kubectl get nodes"
+        success "Cluster accessibility check skipped (dry-run mode)"
+        return 0
     fi
 
-    success "Docker is running"
-}
+    if ! kubectl get nodes &>/dev/null; then
+        error_exit "Cannot access Kubernetes cluster.
 
-#######################################
-# Verifies that kubectl is installed and available in PATH.
-# This is a non-recoverable check - kubectl must be installed manually.
-#######################################
-check_kubectl_available() {
-    info "Checking if kubectl is available..."
+Please ensure the cluster is running by executing:
+    ./cluster-up.sh
 
-    if ! command -v kubectl &>/dev/null; then
-        error_exit "kubectl is not installed. Please install kubectl and try again.
-See: https://kubernetes.io/docs/tasks/tools/install-kubectl/"
+If the cluster is running, check your kubectl context with:
+    kubectl config current-context"
     fi
 
-    success "kubectl is available"
-}
+    info "Cluster nodes:"
+    kubectl get nodes
 
-#######################################
-# Verifies that Kind is installed and available in PATH.
-# This is a non-recoverable check - Kind must be installed manually.
-#######################################
-check_kind_available() {
-    info "Checking if Kind is available..."
-
-    if ! command -v kind &>/dev/null; then
-        error_exit "Kind is not installed. Please install Kind and try again.
-See: https://kind.sigs.k8s.io/docs/user/quick-start/#installation"
-    fi
-
-    success "Kind is available"
+    success "Cluster is accessible"
 }
 
 #######################################
 # Runs all prerequisite checks that are non-recoverable.
-# If any check fails, the script will exit with an error message.
+# If any check fails, the script will exit with an error message explaining
+# what needs to be fixed before the script can proceed.
 #######################################
 check_prerequisites() {
     info "=== Phase: Prerequisites ==="
 
     check_docker_running
     check_kubectl_available
-    check_kind_available
+    verify_cluster_accessible
 
     success "All prerequisites satisfied"
     echo ""
@@ -259,12 +220,17 @@ check_prerequisites() {
 
 # =============================================================================
 # ENVIRONMENT VERIFICATION (Non-recoverable)
+#
+# These checks verify that required environment variables are set and point
+# to valid locations. The user must configure these manually before running
+# the conformance tests.
 # =============================================================================
 
 #######################################
 # Verifies that the GATEWAY_CONFORMANCE_SUITE environment variable is set
 # and points to a valid Gateway API repository with a conformance directory.
-# This is non-recoverable - the user must configure this manually.
+# This is non-recoverable - the user must configure this manually by cloning
+# the Gateway API repository and setting the environment variable.
 #######################################
 verify_conformance_suite_env() {
     info "=== Phase: Environment Verification ==="
@@ -286,7 +252,7 @@ The path should point to the root of the Gateway API repository clone."
         error_exit "GATEWAY_CONFORMANCE_SUITE path does not exist: ${GATEWAY_CONFORMANCE_SUITE}
 
 Please clone the Gateway API repository:
-    git clone https://github.com/wack/gateway-api.git ${GATEWAY_CONFORMANCE_SUITE}"
+    git clone https://github.com/kubernetes-sigs/gateway-api.git ${GATEWAY_CONFORMANCE_SUITE}"
     fi
 
     # Verify the conformance directory exists within the repository
@@ -303,116 +269,18 @@ not the conformance subdirectory. The repository should contain a 'conformance/'
 }
 
 # =============================================================================
-# KUBERNETES CLUSTER MANAGEMENT (Recoverable)
-# =============================================================================
-
-#######################################
-# Checks if the specified Kind cluster exists.
-# Returns:
-#   0 if the cluster exists, 1 otherwise
-#######################################
-kind_cluster_exists() {
-    local readonly cluster_name="$1"
-    kind get clusters 2>/dev/null | grep -q "^${cluster_name}$"
-}
-
-#######################################
-# Creates a new Kind cluster if it doesn't exist.
-# This is a recoverable operation - if the cluster is missing, we create it.
-# Arguments:
-#   Uses global CLUSTER_NAME variable
-#######################################
-ensure_kind_cluster_exists() {
-    info "Checking if Kind cluster '${CLUSTER_NAME}' exists..."
-
-    if kind_cluster_exists "${CLUSTER_NAME}"; then
-        success "Kind cluster '${CLUSTER_NAME}' already exists"
-    else
-        warn "Kind cluster '${CLUSTER_NAME}' does not exist, creating it..."
-        run_cmd cargo make kind-create
-
-        if [[ "${DRY_RUN}" != true ]] && ! kind_cluster_exists "${CLUSTER_NAME}"; then
-            error_exit "Failed to create Kind cluster '${CLUSTER_NAME}'"
-        fi
-
-        success "Kind cluster '${CLUSTER_NAME}' created successfully"
-    fi
-}
-
-#######################################
-# Ensures kubectl is configured to use the correct Kind cluster context.
-# This is a recoverable operation - we switch context if needed.
-# Arguments:
-#   Uses global CLUSTER_NAME variable
-#######################################
-ensure_correct_kubectl_context() {
-    local readonly expected_context="kind-${CLUSTER_NAME}"
-
-    info "Checking kubectl context..."
-
-    local current_context
-    current_context=$(kubectl config current-context 2>/dev/null || echo "")
-
-    if [[ "${current_context}" == "${expected_context}" ]]; then
-        success "kubectl context is already set to '${expected_context}'"
-    else
-        if [[ -n "${current_context}" ]]; then
-            warn "kubectl context is '${current_context}', switching to '${expected_context}'..."
-        else
-            warn "No kubectl context set, switching to '${expected_context}'..."
-        fi
-
-        run_cmd cargo make kind-use
-        success "Switched kubectl context to '${expected_context}'"
-    fi
-}
-
-#######################################
-# Verifies that the Kubernetes cluster is accessible and ready.
-# This validates that we can communicate with the cluster after context setup.
-#######################################
-verify_cluster_accessible() {
-    info "Verifying cluster is accessible..."
-
-    if [[ "${DRY_RUN}" == true ]]; then
-        echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} kubectl get nodes"
-        success "Cluster accessibility check skipped (dry-run mode)"
-        return 0
-    fi
-
-    if ! kubectl get nodes &>/dev/null; then
-        error_exit "Cannot access Kubernetes cluster. Please check your cluster status."
-    fi
-
-    # Display node status for confirmation
-    info "Cluster nodes:"
-    kubectl get nodes
-
-    success "Cluster is accessible"
-}
-
-#######################################
-# Orchestrates all Kubernetes cluster setup steps with recovery logic.
-# Creates the cluster if missing, sets the correct context, and verifies access.
-#######################################
-setup_kubernetes_cluster() {
-    info "=== Phase: Kubernetes Cluster Setup ==="
-
-    ensure_kind_cluster_exists
-    ensure_correct_kubectl_context
-    verify_cluster_accessible
-
-    success "Kubernetes cluster is ready"
-    echo ""
-}
-
-# =============================================================================
-# BUILD AND LOAD IMAGES
+# BUILD AND PUSH IMAGES
+#
+# This phase compiles the Rust code, builds Docker images, and pushes them
+# to the container registry. Unlike Kind (which loads images directly into
+# the cluster), DigitalOcean clusters pull images from a registry, so we
+# must push images before they can be deployed.
 # =============================================================================
 
 #######################################
 # Verifies that the Rust project compiles successfully.
 # This is a non-recoverable check - compilation errors require code fixes.
+# We run this before building Docker images to fail fast on code errors.
 #######################################
 verify_rust_compiles() {
     info "Verifying Rust project compiles..."
@@ -427,6 +295,7 @@ verify_rust_compiles() {
 #######################################
 # Builds the Docker images for control plane and data plane.
 # This is a non-recoverable operation - build failures require investigation.
+# The images are tagged for pushing to the container registry.
 #######################################
 build_docker_images() {
     info "Building Docker images..."
@@ -439,35 +308,34 @@ build_docker_images() {
 }
 
 #######################################
-# Loads Docker images into the Kind cluster.
-# This is an idempotent operation - loading images that already exist is safe.
-# Arguments:
-#   Uses global CLUSTER_NAME variable
+# Pushes Docker images to the container registry.
+# Unlike Kind clusters (which use `kind load docker-image` to load images
+# directly), DigitalOcean clusters must pull images from a registry. This
+# function pushes the built images so the cluster can access them.
 #######################################
-load_images_into_kind() {
-    info "Loading images into Kind cluster..."
+push_images_to_registry() {
+    info "Pushing images to container registry..."
 
-    # Load control plane image
-    info "Loading multiway-controlplane:latest..."
-    if ! run_cmd kind load docker-image multiway-controlplane:latest --name "${CLUSTER_NAME}"; then
-        error_exit "Failed to load control plane image into Kind cluster"
+    if [[ -z "${DOCKER_REGISTRY:-}" ]]; then
+        error_exit "DOCKER_REGISTRY environment variable is not set.
+Please set it to your container registry URL.
+Example: export DOCKER_REGISTRY=ghcr.io/myorg"
     fi
 
-    # Load data plane image
-    info "Loading multiway-dataplane:latest..."
-    if ! run_cmd kind load docker-image multiway-dataplane:latest --name "${CLUSTER_NAME}"; then
-        error_exit "Failed to load data plane image into Kind cluster"
+    if ! run_cmd cargo make do-push-images; then
+        error_exit "Failed to push images to registry"
     fi
 
-    success "Images loaded into Kind cluster"
+    success "Images pushed to registry"
 }
 
 #######################################
-# Orchestrates the build and image loading phase.
-# Can be skipped with --skip-build flag for faster iteration.
+# Orchestrates the build and image push phase.
+# Can be skipped with --skip-build flag for faster iteration when images
+# have already been built and pushed (e.g., when only re-running tests).
 #######################################
-build_and_load_images() {
-    info "=== Phase: Build and Load Images ==="
+build_and_push_images() {
+    info "=== Phase: Build and Push Images ==="
 
     if [[ "${SKIP_BUILD}" == true ]]; then
         warn "Skipping build phase (--skip-build specified)"
@@ -477,20 +345,23 @@ build_and_load_images() {
 
     verify_rust_compiles
     build_docker_images
-    load_images_into_kind
+    push_images_to_registry
 
-    success "Build and load phase complete"
+    success "Build and push phase complete"
     echo ""
 }
 
 # =============================================================================
 # DEPLOY GATEWAY COMPONENTS (Recoverable)
+#
+# This phase deploys the gateway controller to the Kubernetes cluster. Most
+# operations here are recoverable - if something exists from a previous run,
+# we clean it up and start fresh. This ensures a clean state for each test run.
 # =============================================================================
 
 #######################################
 # Checks if the gateway namespace exists in the cluster.
-# Returns:
-#   0 if the namespace exists, 1 otherwise
+# Used to determine if cleanup is needed before deployment.
 #######################################
 namespace_exists() {
     local readonly ns="$1"
@@ -499,9 +370,9 @@ namespace_exists() {
 
 #######################################
 # Cleans up any existing gateway deployments by deleting the namespace.
-# This ensures a fresh state before deploying new components.
-# The function is idempotent - it safely handles the case where the
-# namespace doesn't exist.
+# This is a recoverable operation - we delete the namespace to ensure a
+# clean slate for the new deployment. Deleting the namespace removes all
+# resources within it (deployments, services, configmaps, etc.).
 #######################################
 cleanup_existing_deployment() {
     info "Cleaning up existing deployments in namespace '${DEFAULT_NAMESPACE}'..."
@@ -513,23 +384,18 @@ cleanup_existing_deployment() {
         return 0
     fi
 
-    # Check if namespace exists before attempting deletion
     if ! namespace_exists "${DEFAULT_NAMESPACE}"; then
         success "Namespace '${DEFAULT_NAMESPACE}' does not exist, nothing to clean up"
         return 0
     fi
 
-    # Delete the namespace (this removes all resources within it)
     info "Deleting namespace '${DEFAULT_NAMESPACE}' and all its resources..."
     if ! kubectl delete namespace "${DEFAULT_NAMESPACE}" --ignore-not-found; then
         error_exit "Failed to delete namespace '${DEFAULT_NAMESPACE}'"
     fi
 
-    # Wait for the namespace to be fully deleted
-    # This is important because Kubernetes namespace deletion is asynchronous
     info "Waiting for namespace deletion to complete..."
     if ! kubectl wait --for=delete namespace/"${DEFAULT_NAMESPACE}" --timeout=60s 2>/dev/null; then
-        # The wait command may fail if the namespace is already gone, which is fine
         if namespace_exists "${DEFAULT_NAMESPACE}"; then
             error_exit "Namespace '${DEFAULT_NAMESPACE}' was not deleted within timeout"
         fi
@@ -540,7 +406,8 @@ cleanup_existing_deployment() {
 
 #######################################
 # Creates a fresh namespace for the gateway components.
-# This should be called after cleanup_existing_deployment.
+# The namespace isolates the gateway resources from other workloads in the
+# cluster and makes cleanup straightforward (delete the namespace).
 #######################################
 create_fresh_namespace() {
     info "Creating fresh namespace '${DEFAULT_NAMESPACE}'..."
@@ -560,7 +427,9 @@ create_fresh_namespace() {
 
 #######################################
 # Installs or updates the Gateway API CRDs in the cluster.
-# This is an idempotent operation - running it multiple times is safe.
+# CRDs (Custom Resource Definitions) must be installed before deploying
+# resources that use them. This is idempotent - running it multiple times
+# is safe and will update CRDs if the definitions have changed.
 #######################################
 install_gateway_api_crds() {
     info "Installing Gateway API CRDs..."
@@ -574,12 +443,12 @@ install_gateway_api_crds() {
 
 #######################################
 # Deploys the gateway controller to the cluster.
-# Assumes the namespace has already been created by create_fresh_namespace().
+# This applies the Kubernetes manifests that define the controller deployment,
+# RBAC permissions, and related resources.
 #######################################
 deploy_gateway_controller() {
     info "Deploying gateway controller..."
 
-    # Deploy the controller using cargo make
     if ! run_cmd cargo make deploy; then
         error_exit "Failed to deploy gateway controller"
     fi
@@ -589,9 +458,9 @@ deploy_gateway_controller() {
 
 #######################################
 # Waits for the gateway controller pods to become ready.
-# Uses an initial timeout, with recovery logic to wait longer if needed.
-# Arguments:
-#   Uses global DEFAULT_NAMESPACE, DEFAULT_POD_LABEL, and timeout constants
+# Pods may take time to start due to image pulling, resource allocation,
+# or initialization logic. We wait with an initial timeout and extend it
+# if needed, providing diagnostic information if pods fail to start.
 #######################################
 wait_for_controller_ready() {
     info "Waiting for controller pods to be ready..."
@@ -602,13 +471,11 @@ wait_for_controller_ready() {
         return 0
     fi
 
-    # First attempt with standard timeout
     if kubectl wait --for=condition=Ready pods -l "${DEFAULT_POD_LABEL}" -n "${DEFAULT_NAMESPACE}" --timeout="${DEFAULT_POD_READY_TIMEOUT}" 2>/dev/null; then
         success "Controller pods are ready"
         return 0
     fi
 
-    # Recovery: try with extended timeout
     warn "Pods not ready within ${DEFAULT_POD_READY_TIMEOUT}, extending wait to ${DEFAULT_EXTENDED_POD_READY_TIMEOUT}..."
 
     if kubectl wait --for=condition=Ready pods -l "${DEFAULT_POD_LABEL}" -n "${DEFAULT_NAMESPACE}" --timeout="${DEFAULT_EXTENDED_POD_READY_TIMEOUT}" 2>/dev/null; then
@@ -616,7 +483,6 @@ wait_for_controller_ready() {
         return 0
     fi
 
-    # Show pod status for debugging
     warn "Pods still not ready. Current pod status:"
     kubectl get pods -n "${DEFAULT_NAMESPACE}" -l "${DEFAULT_POD_LABEL}"
 
@@ -627,14 +493,8 @@ Please check the pod logs for errors:
 
 #######################################
 # Orchestrates the gateway component deployment phase.
-# Can be skipped with --skip-deploy flag for faster iteration.
-#
-# Steps:
-#   1. Clean up any existing deployments (delete namespace)
-#   2. Install Gateway API CRDs (cluster-scoped, not affected by namespace deletion)
-#   3. Create fresh namespace
-#   4. Deploy gateway controller
-#   5. Wait for controller pods to be ready
+# Can be skipped with --skip-deploy flag when the controller is already
+# deployed and you only want to re-run the conformance tests.
 #######################################
 deploy_gateway_components() {
     info "=== Phase: Deploy Gateway Components ==="
@@ -657,36 +517,32 @@ deploy_gateway_components() {
 
 # =============================================================================
 # RUN CONFORMANCE TESTS
+#
+# This phase runs the official Gateway API conformance test suite against
+# the deployed gateway controller. Test failures are expected during
+# development and are reported as warnings rather than causing the script
+# to exit with an error.
 # =============================================================================
 
 #######################################
 # Runs the Gateway API conformance test suite from the local repository.
 # Test failures are expected output and do not cause the script to fail.
-#
-# Note: The Kind cluster must be configured with extraPortMappings (ports 80/443)
-# and the gateway controller uses hostPort to expose the data plane directly on
-# the node. This allows external traffic to reach the Gateway at 127.0.0.1:80.
-#
-# Limitation: Only one Gateway per port can be active on a single-node cluster.
-# The conformance test setup creates multiple Gateways, so some may fail to
-# schedule due to hostPort conflicts. For full multi-Gateway support, use
-# MetalLB or a multi-node cluster.
+# The conformance tests are run from the Gateway API repository clone,
+# which must be configured via the GATEWAY_CONFORMANCE_SUITE environment
+# variable. We capture the exit code to report pass/fail status but allow
+# the script to complete even if tests fail.
 #######################################
 run_conformance_tests() {
     info "=== Phase: Run Conformance Tests ==="
 
     info "Running conformance tests from: ${GATEWAY_CONFORMANCE_SUITE}"
 
-    # Change to the conformance suite directory and run tests
-    # Note: We use a subshell to avoid changing the script's working directory
     if [[ "${DRY_RUN}" == true ]]; then
         echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} cd ${GATEWAY_CONFORMANCE_SUITE} && make conformance"
         success "Conformance test run skipped (dry-run mode)"
         return 0
     fi
 
-    # Run the conformance tests
-    # We use 'set +e' temporarily because test failures should not cause script exit
     set +e
     (
         cd "${GATEWAY_CONFORMANCE_SUITE}" && make conformance
@@ -709,19 +565,12 @@ run_conformance_tests() {
 # MAIN EXECUTION
 # =============================================================================
 
-#######################################
-# Main entry point for the script.
-# Orchestrates all phases of the conformance test workflow.
-# Arguments:
-#   $@ - All command-line arguments
-#######################################
 main() {
-    # Parse command-line arguments
     parse_arguments "$@"
 
     echo ""
     info "==========================================="
-    info "Gateway API Local Conformance Test Runner"
+    info "Gateway API Conformance Test Runner"
     info "==========================================="
     echo ""
     info "Configuration:"
@@ -731,11 +580,9 @@ main() {
     info "  Dry run:      ${DRY_RUN}"
     echo ""
 
-    # Run all phases in order
     check_prerequisites
     verify_conformance_suite_env
-    setup_kubernetes_cluster
-    build_and_load_images
+    build_and_push_images
     deploy_gateway_components
     run_conformance_tests
 
@@ -745,5 +592,4 @@ main() {
     success "==========================================="
 }
 
-# Run main function with all script arguments
 main "$@"
