@@ -39,6 +39,9 @@ cargo make outdated
 
 # Sync Gateway API CRDs and regenerate Rust bindings
 cargo make gateway-api-sync
+
+# Lint shell scripts with ShellCheck
+cargo make shellcheck
 ```
 
 ## Gateway API CRDs
@@ -86,6 +89,7 @@ Always validate your changes before considering a task complete:
 
 - **At minimum**: Run `cargo make fmt` to ensure code is properly formatted
 - **Preferred**: Run `cargo make` to run the full test suite (formatting, linting, build, and tests)
+- **After editing shell scripts**: Run `cargo make shellcheck` to lint shell scripts
 
 Do not commit or mark work as done until validation passes.
 
