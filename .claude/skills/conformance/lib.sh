@@ -2,7 +2,7 @@
 #
 # lib.sh
 #
-# Shared library of functions for the gateway-conformance-runner skill scripts.
+# Shared library of functions for the conformance skill scripts.
 # This file should be sourced by other scripts, not executed directly.
 #
 # Usage:

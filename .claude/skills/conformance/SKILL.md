@@ -1,9 +1,9 @@
 ---
-name: gateway-conformance-runner
+name: conformance
 description: Use this skill when you need to run the Gateway API conformance test suite for the multiway project. It includes setting up a DigitalOcean Kubernetes cluster, building and deploying the gateway controller, running the official conformance tests, and analyzing the results. The skill handles the complete workflow from cluster creation to test execution and log retrieval.
 hooks:
-  pre: .claude/skills/gateway-conformance-runner/cluster-up.sh
-  post: .claude/skills/gateway-conformance-runner/cluster-down.sh
+  pre: .claude/skills/conformance/cluster-up.sh
+  post: .claude/skills/conformance/cluster-down.sh
 ---
 
 You are responsible for running the Gateway API conformance test suite for the multiway project and reporting the results.
@@ -30,25 +30,25 @@ You can also run these scripts manually:
 
 ```bash
 # Start or prepare the cluster for current branch
-.claude/skills/gateway-conformance-runner/cluster-up.sh
+.claude/skills/conformance/cluster-up.sh
 
 # Use a specific cluster name
-.claude/skills/gateway-conformance-runner/cluster-up.sh --cluster-name my-cluster
+.claude/skills/conformance/cluster-up.sh --cluster-name my-cluster
 
 # Destroy the cluster when done
-.claude/skills/gateway-conformance-runner/cluster-down.sh
+.claude/skills/conformance/cluster-down.sh
 ```
 
 # Running Conformance Tests
 
-Use the automated script located at `.claude/skills/gateway-conformance-runner/run-conformance.sh` to run the conformance tests.
+Use the automated script located at `.claude/skills/conformance/run-conformance.sh` to run the conformance tests.
 
 **Note**: The cluster must be running before executing this script. If using the skill hooks, the cluster is started automatically. If running manually, use `cluster-up.sh` first.
 
 ## Basic Usage
 
 ```bash
-.claude/skills/gateway-conformance-runner/run-conformance.sh
+.claude/skills/conformance/run-conformance.sh
 ```
 
 ## Script Options
@@ -96,16 +96,16 @@ Before running the skill, ensure:
 
 ```bash
 # Full test run (build, deploy, test)
-.claude/skills/gateway-conformance-runner/run-conformance.sh
+.claude/skills/conformance/run-conformance.sh
 
 # Quick re-test (skip build, images already exist)
-.claude/skills/gateway-conformance-runner/run-conformance.sh --skip-build
+.claude/skills/conformance/run-conformance.sh --skip-build
 
 # Just run tests (controller already deployed)
-.claude/skills/gateway-conformance-runner/run-conformance.sh --skip-build --skip-deploy
+.claude/skills/conformance/run-conformance.sh --skip-build --skip-deploy
 
 # Preview what would be executed
-.claude/skills/gateway-conformance-runner/run-conformance.sh --dry-run
+.claude/skills/conformance/run-conformance.sh --dry-run
 ```
 
 # Building Docker Images
@@ -115,7 +115,7 @@ The `build-docker.sh` script handles Docker image building and pushing separatel
 ## Basic Usage
 
 ```bash
-.claude/skills/gateway-conformance-runner/build-docker.sh
+.claude/skills/conformance/build-docker.sh
 ```
 
 ## Script Options
@@ -138,16 +138,16 @@ The `build-docker.sh` script handles Docker image building and pushing separatel
 
 ```bash
 # Build and push images (dev mode - faster builds)
-.claude/skills/gateway-conformance-runner/build-docker.sh
+.claude/skills/conformance/build-docker.sh
 
 # Build release images (production optimization)
-.claude/skills/gateway-conformance-runner/build-docker.sh --release
+.claude/skills/conformance/build-docker.sh --release
 
 # Build only, don't push to registry
-.claude/skills/gateway-conformance-runner/build-docker.sh --skip-push
+.claude/skills/conformance/build-docker.sh --skip-push
 
 # Preview what would be executed
-.claude/skills/gateway-conformance-runner/build-docker.sh --dry-run
+.claude/skills/conformance/build-docker.sh --dry-run
 ```
 
 **Note**: The `run-conformance.sh` script calls `build-docker.sh` internally during its build phase. Use `--skip-build` with `run-conformance.sh` to skip this step if images are already built.

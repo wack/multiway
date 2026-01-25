@@ -17,7 +17,7 @@ This skill guides you through a development loop for implementing conformance te
 5. Implements and verifies the fix
 6. Documents the results
 
-**CRITICAL**: All conformance tests MUST be run **locally** using the `gateway-conformance-runner` skill's local testing workflow. Never run tests in-cluster during development.
+**CRITICAL**: All conformance tests MUST be run **locally** using the `conformance` skill's local testing workflow. Never run tests in-cluster during development.
 
 ## Test Priority Tiers
 
@@ -73,7 +73,7 @@ Before making any code changes, verify the current state:
 
 1. Ensure the `GATEWAY_CONFORMANCE_SUITE` environment variable is set
 2. Navigate to `$GATEWAY_CONFORMANCE_SUITE`
-3. Use the `gateway-conformance-runner` skill to run the conformance suite locally
+3. Use the `conformance` skill to run the conformance suite locally
 4. Verify:
    - The selected test is currently **skipped** (not running)
    - All other enabled tests are **passing**
@@ -83,7 +83,7 @@ If other tests are failing, stop and address those failures first before enablin
 ### Step 3: Enable the Test and Observe Failure
 
 1. Enable the test by removing it from the skip list or adding it to the enabled tests in the conformance configuration
-2. Run the conformance suite again using `gateway-conformance-runner`
+2. Run the conformance suite again using `conformance`
 3. Observe and capture the test failure output
 4. Document the specific failure message and any relevant stack traces
 
@@ -163,7 +163,7 @@ Create a Markdown file in `./bug-reports/` documenting:
    ```bash
    cargo nextest run [test_name]
    ```
-2. Run the full conformance suite using `gateway-conformance-runner`
+2. Run the full conformance suite using `conformance`
 3. Verify:
    - The previously failing test now **passes**
    - No other tests have regressed
@@ -207,7 +207,7 @@ Once the test passes:
 
 ## Running Conformance Tests Locally
 
-Always use the `gateway-conformance-runner` skill for running conformance tests. The local testing workflow provides:
+Always use the `conformance` skill for running conformance tests. The local testing workflow provides:
 - Faster iteration cycles
 - Real-time output for debugging
 - Direct access to test logs
