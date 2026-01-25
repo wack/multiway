@@ -26,6 +26,8 @@ This skill guides you through a task-based workflow for implementing conformance
 
 **CRITICAL**: All conformance tests MUST be run using the `conformance` skill. Never run tests in-cluster during development.
 
+**IMPORTANT**: Conformance tests MUST be run on a DigitalOcean Kubernetes cluster provisioned by `cluster-up.sh`. Local clusters (Kind, minikube, etc.) are NOT suitable for conformance testing. Always start by running `cluster-up.sh` even if you see another kubectl context configured.
+
 ## Test Priority Tiers
 
 Test cases have been prioritized into 7 tiers, stored in CSV files within this skill's directory:
@@ -465,3 +467,32 @@ The `pick-next.sh` script automates:
 - `./test-tiers/*.csv`: Test priority lists and implementation status
 - `./bug-reports/`: Diagnostic reports for failing tests
 - `$GATEWAY_CONFORMANCE_SUITE/conformance`: The official conformance test suite
+
+## Cluster Lifecycle
+
+- **Cluster Setup** (`cluster-up.sh`): Run at the start of a development session. Creates the DigitalOcean Kubernetes cluster if it doesn't exist, or clears the namespace if it does. Ensures kubectl context is properly configured.
+- **Cluster Cleanup** (`cluster-down.sh`): Run manually when you want to destroy the cluster. This is NOT run automatically - you must run it yourself when done to avoid unnecessary costs.
+
+### Cluster Naming
+
+The cluster name defaults to a sanitized version of the current git branch, prefixed with `mw-`. For example:
+- Branch `main` → cluster `mw-main`
+- Branch `feature/my-test` → cluster `mw-feature-my-test`
+- Branch `claude/migrate-kind-to-digitalocean-Ytxrr` → cluster `mw-claude-migrate-kind-to-digitalocean-ytxrr`
+
+This allows multiple developers or branches to have isolated clusters without conflicts.
+
+You can override the cluster name with `--cluster-name` or the `DO_CLUSTER_NAME` environment variable.
+
+### Example Commands
+
+```bash
+# Start or prepare the cluster for current branch
+.claude/skills/development-loop/cluster-up.sh
+
+# Use a specific cluster name
+.claude/skills/development-loop/cluster-up.sh --cluster-name my-cluster
+
+# Destroy the cluster when done
+.claude/skills/development-loop/cluster-down.sh
+```

@@ -29,7 +29,7 @@ set -euo pipefail
 # Source the shared library of functions. This provides logging functions,
 # command execution utilities, cluster name helpers, and CLI tool checks.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/lib.sh"
+source "${SCRIPT_DIR}/../conformance/lib.sh"
 
 # =============================================================================
 # CONFIGURATION

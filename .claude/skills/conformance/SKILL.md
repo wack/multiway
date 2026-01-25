@@ -1,54 +1,15 @@
 ---
 name: conformance
-description: Use this skill when you need to run the Gateway API conformance test suite for the multiway project. It includes setting up a DigitalOcean Kubernetes cluster, building and deploying the gateway controller, running the official conformance tests, and analyzing the results. The skill handles the complete workflow from cluster creation to test execution and log retrieval.
+description: Use this skill when you need to run the Gateway API conformance test suite for the multiway project. It handles building and deploying the gateway controller, running the official conformance tests, and analyzing the results. Requires a Kubernetes cluster to be running (use the development-loop skill for cluster management).
 ---
 
 You are responsible for running the Gateway API conformance test suite for the multiway project and reporting the results.
 
-# IMPORTANT: Cluster Setup Required
-
-**Before doing anything else, you MUST run the cluster setup script:**
-
-```bash
-.claude/skills/conformance/cluster-up.sh
-```
-
-This creates the DigitalOcean Kubernetes cluster (or prepares an existing one) and sets your kubectl context. **Do not skip this step** - it ensures you're testing against the correct environment.
-
-# Cluster Lifecycle
-
-- **Cluster Setup** (`cluster-up.sh`): Run at the start of the skill. Creates the DigitalOcean Kubernetes cluster if it doesn't exist, or clears the namespace if it does. Ensures kubectl context is properly configured.
-- **Cluster Cleanup** (`cluster-down.sh`): Run manually when you want to destroy the cluster. This is NOT run automatically - you must run it yourself when done to avoid unnecessary costs.
-
-## Cluster Naming
-
-The cluster name defaults to a sanitized version of the current git branch, prefixed with `mw-`. For example:
-- Branch `main` → cluster `mw-main`
-- Branch `feature/my-test` → cluster `mw-feature-my-test`
-- Branch `claude/migrate-kind-to-digitalocean-Ytxrr` → cluster `mw-claude-migrate-kind-to-digitalocean-ytxrr`
-
-This allows multiple developers or branches to have isolated clusters without conflicts.
-
-You can override the cluster name with `--cluster-name` or the `DO_CLUSTER_NAME` environment variable.
-
-You can also run these scripts manually:
-
-```bash
-# Start or prepare the cluster for current branch
-.claude/skills/conformance/cluster-up.sh
-
-# Use a specific cluster name
-.claude/skills/conformance/cluster-up.sh --cluster-name my-cluster
-
-# Destroy the cluster when done
-.claude/skills/conformance/cluster-down.sh
-```
+**Prerequisite**: A Kubernetes cluster must be running before using this skill. Use the `development-loop` skill's `cluster-up.sh` script to provision a DigitalOcean cluster if needed.
 
 # Running Conformance Tests
 
 Use the automated script located at `.claude/skills/conformance/run-conformance.sh` to run the conformance tests.
-
-**Note**: The cluster must be running before executing this script. Run `cluster-up.sh` first if the cluster isn't already set up.
 
 ## Basic Usage
 
@@ -175,16 +136,15 @@ you may wish to invoke to get conformance testing back on track.
 
 If the script fails, consider these responsibilities:
 
-1. **Cluster Management**: The `cluster-up.sh` and `cluster-down.sh` scripts handle cluster lifecycle
-2. **Build Pipeline**: Use `build-docker.sh` to build and push Docker images for the gateway controller
-3. **Deployment**: Deploy the gateway controller and all necessary CRDs following the project's established patterns
-4. **Test Execution**: Run the official Gateway API conformance test suite with appropriate configuration
-5. **Results Analysis**: Retrieve and interpret test logs, identifying failures and their root causes
+1. **Build Pipeline**: Use `build-docker.sh` to build and push Docker images for the gateway controller
+2. **Deployment**: Deploy the gateway controller and all necessary CRDs following the project's established patterns
+3. **Test Execution**: Run the official Gateway API conformance test suite with appropriate configuration
+4. **Results Analysis**: Retrieve and interpret test logs, identifying failures and their root causes
 
 When encountering issues:
 - If `GATEWAY_CONFORMANCE_SUITE` is not set, guide the user to configure it in `.envrc.local`
 - If `DOCKER_REGISTRY` is not set, guide the user to configure it in `.envrc.local`
-- If kubectl context is wrong, run `cluster-up.sh` to reset the context
+- If kubectl context is wrong, use the `development-loop` skill's `cluster-up.sh` to reset the context
 - If DigitalOcean cluster creation fails, check doctl authentication and DigitalOcean account quotas
 - If image push fails, verify registry authentication (e.g., `docker login ghcr.io`)
 - If tests fail, analyze logs for specific failure points but do not suggest fixes
@@ -197,7 +157,6 @@ When encountering issues:
 3. Verify all prerequisites (Docker, doctl, kubectl, Go) are installed and functioning
 4. Verify that the Rust project will compile before building Docker images: `cargo check`
 5. Check that the gateway controller is fully deployed before running tests
-6. Run `cluster-down.sh` when done to delete the cluster and avoid unnecessary costs
 
 **Available Docker Build Commands**:
 - `build-docker.sh` - Build and push Docker images (recommended - handles full workflow)
@@ -208,9 +167,3 @@ When encountering issues:
 - `cargo make docker-build-all-cross` - Build for both amd64 and arm64 (multi-platform)
 - `cargo make docker-build-all-push` - Build and push multi-platform images (requires DOCKER_REGISTRY env var)
 
-**Cluster Lifecycle Commands**:
-- `cluster-up.sh` - Create or prepare the DigitalOcean cluster
-- `cluster-down.sh` - Destroy the DigitalOcean cluster
-- `cargo make do-create` - Create a new cluster (called by cluster-up.sh)
-- `cargo make do-delete` - Delete the cluster (called by cluster-down.sh)
-- `cargo make do-use` - Save kubeconfig for the cluster
