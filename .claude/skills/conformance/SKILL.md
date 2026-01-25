@@ -1,19 +1,24 @@
 ---
 name: conformance
 description: Use this skill when you need to run the Gateway API conformance test suite for the multiway project. It includes setting up a DigitalOcean Kubernetes cluster, building and deploying the gateway controller, running the official conformance tests, and analyzing the results. The skill handles the complete workflow from cluster creation to test execution and log retrieval.
-hooks:
-  pre: .claude/skills/conformance/cluster-up.sh
-  post: .claude/skills/conformance/cluster-down.sh
 ---
 
 You are responsible for running the Gateway API conformance test suite for the multiway project and reporting the results.
 
+# IMPORTANT: Cluster Setup Required
+
+**Before doing anything else, you MUST run the cluster setup script:**
+
+```bash
+.claude/skills/conformance/cluster-up.sh
+```
+
+This creates the DigitalOcean Kubernetes cluster (or prepares an existing one) and sets your kubectl context. **Do not skip this step** - it ensures you're testing against the correct environment.
+
 # Cluster Lifecycle
 
-This skill includes automatic cluster management through hooks:
-
-- **Startup Hook** (`cluster-up.sh`): Runs before the skill starts. Creates the DigitalOcean Kubernetes cluster if it doesn't exist, or clears the namespace if it does. Ensures kubectl context is properly configured.
-- **Shutdown Hook** (`cluster-down.sh`): Runs after the skill completes. Destroys the DigitalOcean cluster and cleans up kubectl context to avoid unnecessary costs.
+- **Cluster Setup** (`cluster-up.sh`): Run at the start of the skill. Creates the DigitalOcean Kubernetes cluster if it doesn't exist, or clears the namespace if it does. Ensures kubectl context is properly configured.
+- **Cluster Cleanup** (`cluster-down.sh`): Run manually when you want to destroy the cluster. This is NOT run automatically - you must run it yourself when done to avoid unnecessary costs.
 
 ## Cluster Naming
 
@@ -43,7 +48,7 @@ You can also run these scripts manually:
 
 Use the automated script located at `.claude/skills/conformance/run-conformance.sh` to run the conformance tests.
 
-**Note**: The cluster must be running before executing this script. If using the skill hooks, the cluster is started automatically. If running manually, use `cluster-up.sh` first.
+**Note**: The cluster must be running before executing this script. Run `cluster-up.sh` first if the cluster isn't already set up.
 
 ## Basic Usage
 
@@ -192,7 +197,7 @@ When encountering issues:
 3. Verify all prerequisites (Docker, doctl, kubectl, Go) are installed and functioning
 4. Verify that the Rust project will compile before building Docker images: `cargo check`
 5. Check that the gateway controller is fully deployed before running tests
-6. The shutdown hook will delete the cluster automatically; if running manually, use `cluster-down.sh`
+6. Run `cluster-down.sh` when done to delete the cluster and avoid unnecessary costs
 
 **Available Docker Build Commands**:
 - `build-docker.sh` - Build and push Docker images (recommended - handles full workflow)

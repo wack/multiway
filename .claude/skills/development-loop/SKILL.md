@@ -9,15 +9,22 @@ You are an expert in implementing Kubernetes Gateway API conformance tests. You 
 
 ## Overview
 
-This skill guides you through a development loop for implementing conformance tests one at a time. Each iteration of the loop:
-1. Selects the highest-priority unimplemented test
-2. Verifies the test is currently skipped
-3. Enables the test and observes the failure
-4. Diagnoses the root cause
-5. Implements and verifies the fix
-6. Documents the results
+This skill guides you through a task-based workflow for implementing conformance tests one at a time. The workflow consists of the following tasks:
 
-**CRITICAL**: All conformance tests MUST be run **locally** using the `conformance` skill's local testing workflow. Never run tests in-cluster during development.
+1. **Provision test cluster** - Bring up a Kubernetes cluster
+2. **Run conformance tests** - Verify current state of the test suite
+3. **Resolve failing tests** (if any) - Fix outstanding failures before proceeding
+4. **Select the next test** - Pick the highest-priority unimplemented test
+5. **Verify test is skipped** - Confirm the test is not yet running
+6. **Enable test and observe failure** - Activate the test and capture the failure
+7. **Handle test results** - Branch based on pass/fail
+8. **Diagnose the failure** - Investigate root cause
+9. **Implement the fix** - Make code changes
+10. **Verify the fix** - Run conformance tests to confirm
+11. **Document and report** - Record the results
+12. **Tear down cluster** - Clean up resources when done
+
+**CRITICAL**: All conformance tests MUST be run using the `conformance` skill. Never run tests in-cluster during development.
 
 ## Test Priority Tiers
 
@@ -38,18 +45,102 @@ Each CSV file has the following columns:
 - `description`: A brief description of what the test validates
 - `implemented`: Status - `false`, `in-progress`, or `true`
 
-## Development Loop Steps
+## Workflow Tasks
 
-### Step 1: Select the Next Test
+### Task 1: Provision Test Cluster
 
-Use the `pick-next.sh` helper script to select and enable the next test:
+Before starting the development loop, you must ensure a Kubernetes cluster is available for running conformance tests.
+
+**Create a task using the `TaskCreate` tool:**
+
+```
+TaskCreate:
+  subject: "Provision test cluster"
+  description: "Execute the cluster-up.sh script located at .claude/skills/development-loop/cluster-up.sh to provision a DigitalOcean Kubernetes cluster for conformance testing. This script handles cluster creation, kubeconfig setup, and installs required Gateway API CRDs."
+  activeForm: "Provisioning test cluster"
+```
+
+**Execute the script:**
+
+```bash
+.claude/skills/development-loop/cluster-up.sh
+```
+
+The script will:
+1. Create a DigitalOcean Kubernetes cluster (or reuse an existing one)
+2. Configure kubectl context
+3. Install Gateway API CRDs
+4. Verify the cluster is ready for testing
+
+Once the cluster is provisioned, mark the task as completed and proceed to Task 2.
+
+### Task 2: Run Conformance Tests
+
+After the cluster is available, run the conformance test suite to establish the current state.
+
+**Create a task using the `TaskCreate` tool:**
+
+```
+TaskCreate:
+  subject: "Run conformance tests"
+  description: "Use the conformance skill to build and load docker images, then run the Gateway API conformance test suite. This establishes the baseline state of passing and failing tests."
+  activeForm: "Running conformance tests"
+```
+
+**Execute the conformance skill:**
+
+Use the `conformance` skill to run the test suite. This skill will:
+1. Build the docker images
+2. Load the images into the cluster
+3. Run the conformance tests
+4. Report results
+
+**Evaluate the results:**
+- If **all enabled tests pass**: Proceed to Task 4 (Select the next test)
+- If **any tests are failing**: Proceed to Task 3 (Resolve failing tests)
+
+### Task 3: Resolve Failing Tests
+
+If Task 2 revealed failing tests, they must be resolved before enabling any new tests.
+
+**Create a task using the `TaskCreate` tool:**
+
+```
+TaskCreate:
+  subject: "Resolve failing tests"
+  description: "Fix the failing conformance tests identified in the previous run. All existing tests must pass before enabling new tests. Diagnose each failure, implement fixes, and verify with the conformance skill."
+  activeForm: "Resolving failing tests"
+```
+
+**For each failing test:**
+1. Diagnose the failure (see Task 8 for diagnosis techniques)
+2. Implement the fix (see Task 9)
+3. Run the `conformance` skill again to verify
+4. Repeat until all tests pass
+
+Once all tests pass, mark this task as completed and proceed to Task 4.
+
+### Task 4: Select the Next Test
+
+Use the `pick-next.sh` helper script to select and enable the next test.
+
+**Create a task using the `TaskCreate` tool:**
+
+```
+TaskCreate:
+  subject: "Select the next test"
+  description: "Run pick-next.sh to identify and enable the highest-priority unimplemented test from the tier CSV files."
+  activeForm: "Selecting next test"
+```
+
+**Execute the script:**
 
 ```bash
 # See what test is next without enabling it
-./pick-next.sh --show-next
+.claude/skills/development-loop/pick-next.sh --show-next
 
 # Enable the next test (removes t.Skip() and marks as in-progress)
-./pick-next.sh
+.claude/skills/development-loop/pick-next.sh
 ```
 
 The script will:
@@ -62,44 +153,85 @@ The script will:
 - The **test name** (e.g., `HTTPRouteSimpleSameNamespace`)
 - The **test description** (e.g., "Basic HTTP routing from a route to a backend service in the same namespace")
 
-This ensures the user understands what functionality is being implemented in this iteration.
-
 **Example output to user:**
 > The next test to implement is **HTTPRouteSimpleSameNamespace**: Basic HTTP routing from a route to a backend service in the same namespace. This is the foundation of all routing functionality.
 
-### Step 2: Verify Test is Currently Skipped
+### Task 5: Verify Test is Currently Skipped
 
-Before making any code changes, verify the current state:
+Before making any code changes, verify the current state.
 
+**Create a task using the `TaskCreate` tool:**
+
+```
+TaskCreate:
+  subject: "Verify test is currently skipped"
+  description: "Run the conformance skill to confirm that the selected test is currently skipped (not running) and that all other enabled tests are passing."
+  activeForm: "Verifying test is skipped"
+```
+
+**Verification steps:**
 1. Ensure the `GATEWAY_CONFORMANCE_SUITE` environment variable is set
-2. Navigate to `$GATEWAY_CONFORMANCE_SUITE`
-3. Use the `conformance` skill to run the conformance suite locally
-4. Verify:
+2. Use the `conformance` skill to run the conformance suite
+3. Verify:
    - The selected test is currently **skipped** (not running)
    - All other enabled tests are **passing**
 
-If other tests are failing, stop and address those failures first before enabling a new test.
+If other tests are failing, return to Task 3 to resolve them before proceeding.
 
-### Step 3: Enable the Test and Observe Failure
+### Task 6: Enable Test and Observe Failure
 
-1. Enable the test by removing it from the skip list or adding it to the enabled tests in the conformance configuration
-2. Run the conformance suite again using `conformance`
+Enable the test and capture the failure output.
+
+**Create a task using the `TaskCreate` tool:**
+
+```
+TaskCreate:
+  subject: "Enable test and observe failure"
+  description: "Enable the selected test by removing it from the skip list, run the conformance suite, and capture the failure output for diagnosis."
+  activeForm: "Enabling test and observing failure"
+```
+
+**Execution:**
+1. Enable the test by removing it from the skip list or adding it to the enabled tests
+2. Run the conformance suite using the `conformance` skill
 3. Observe and capture the test failure output
 4. Document the specific failure message and any relevant stack traces
 
-### Step 4: Handle Test Results
+### Task 7: Handle Test Results
+
+Evaluate the test results and determine next action.
+
+**Create a task using the `TaskCreate` tool:**
+
+```
+TaskCreate:
+  subject: "Handle test results"
+  description: "Evaluate whether the newly enabled test passed or failed, and determine the next action in the workflow."
+  activeForm: "Handling test results"
+```
 
 **If the test passes immediately:**
 - Update the CSV file to change `implemented` from `in-progress` to `true`
 - Document this finding (the feature was already implemented)
-- Return to Step 1 to select the next test
+- Return to Task 4 to select the next test
 
 **If the test fails:**
-- Proceed to Step 5 (Diagnosis)
+- Proceed to Task 8 (Diagnose the failure)
 
-### Step 5: Diagnose the Failure
+### Task 8: Diagnose the Failure
 
-#### 5a: Attempt to Create a Unit Test (Recommended)
+Investigate the root cause of the test failure.
+
+**Create a task using the `TaskCreate` tool:**
+
+```
+TaskCreate:
+  subject: "Diagnose the failure"
+  description: "Investigate the root cause of the test failure through unit test creation, code analysis, and bug report documentation."
+  activeForm: "Diagnosing failure"
+```
+
+#### 8a: Attempt to Create a Unit Test (Recommended)
 
 Before diving into the implementation, try to recreate the conformance test as a purely functional unit test within this repository:
 
@@ -116,9 +248,9 @@ Having a local unit test provides:
 - Better test isolation
 - Documentation of the expected behavior
 
-If you cannot successfully create a unit test, proceed to the next step.
+If you cannot successfully create a unit test, proceed to the next sub-task.
 
-#### 5b: Investigate Root Cause
+#### 8b: Investigate Root Cause
 
 1. Analyze the failure message to identify the failing assertion
 2. Trace through the code to understand the request flow:
@@ -127,7 +259,7 @@ If you cannot successfully create a unit test, proceed to the next step.
 3. Identify the specific code paths responsible for the failure
 4. Document your findings
 
-#### 5c: File a Bug Report
+#### 8c: File a Bug Report
 
 Create a Markdown file in `./bug-reports/` documenting:
 
@@ -151,28 +283,65 @@ Create a Markdown file in `./bug-reports/` documenting:
 [Your plan to address the issue]
 ```
 
-### Step 6: Implement the Fix
+### Task 9: Implement the Fix
 
+Make the necessary code changes to address the failure.
+
+**Create a task using the `TaskCreate` tool:**
+
+```
+TaskCreate:
+  subject: "Implement the fix"
+  description: "Make the necessary code changes to fix the identified issue, keeping changes minimal and focused on the specific test."
+  activeForm: "Implementing fix"
+```
+
+**Guidelines:**
 1. Make the necessary code changes to fix the identified issue
 2. Keep changes minimal and focused on the specific test
 3. Follow the project's coding conventions and patterns
 
-### Step 7: Verify the Fix
+### Task 10: Verify the Fix
 
-1. If you created a unit test in Step 5a, run it first:
+Confirm that the fix resolves the test failure.
+
+**Create a task using the `TaskCreate` tool:**
+
+```
+TaskCreate:
+  subject: "Verify the fix"
+  description: "Run unit tests and the full conformance suite to verify that the fix works and no regressions were introduced."
+  activeForm: "Verifying fix"
+```
+
+**Verification steps:**
+1. If you created a unit test in Task 8a, run it first:
    ```bash
    cargo nextest run [test_name]
    ```
-2. Run the full conformance suite using `conformance`
+2. Run the full conformance suite using the `conformance` skill
 3. Verify:
    - The previously failing test now **passes**
    - No other tests have regressed
 
-If verification fails, return to Step 5 to continue diagnosis.
+**If verification fails:** Return to Task 8 to continue diagnosis.
 
-### Step 8: Document and Report
+**If verification succeeds:** Proceed to Task 11.
 
-Once the test passes:
+### Task 11: Document and Report
+
+Record the results of the completed test implementation.
+
+**Create a task using the `TaskCreate` tool:**
+
+```
+TaskCreate:
+  subject: "Document and report"
+  description: "Update the CSV status to mark the test as implemented, and create a summary report documenting the changes made."
+  activeForm: "Documenting results"
+```
+
+**Documentation steps:**
 
 1. Update the CSV file to change `implemented` from `in-progress` to `true`
 
@@ -203,24 +372,33 @@ Once the test passes:
 [Any insights that might help with future tests]
 ```
 
-3. Return to Step 1 to continue with the next test
+3. Return to Task 4 to continue with the next test
 
-## Running Conformance Tests Locally
+### Task 12: Tear Down Cluster
 
-Always use the `conformance` skill for running conformance tests. The local testing workflow provides:
-- Faster iteration cycles
-- Real-time output for debugging
-- Direct access to test logs
-- Ability to run individual tests
+When the development session is complete, clean up the cluster resources.
 
-Key commands:
-```bash
-# Verify environment
-echo $GATEWAY_CONFORMANCE_SUITE
+**Create a task using the `TaskCreate` tool:**
 
-# Run conformance tests locally
-cd $GATEWAY_CONFORMANCE_SUITE && make conformance
 ```
+TaskCreate:
+  subject: "Tear down cluster"
+  description: "Execute the cluster-down.sh script to destroy the DigitalOcean Kubernetes cluster and avoid ongoing costs."
+  activeForm: "Tearing down cluster"
+```
+
+**Execute the script:**
+
+```bash
+.claude/skills/development-loop/cluster-down.sh
+```
+
+The script will:
+1. Delete the DigitalOcean Kubernetes cluster
+2. Clean up associated resources
+3. Remove the kubeconfig context
+
+**IMPORTANT**: Only run this task when you are finished with the development session. The cluster takes time to provision, so tearing it down prematurely will slow down future work.
 
 ## Best Practices
 
@@ -236,7 +414,7 @@ cd $GATEWAY_CONFORMANCE_SUITE && make conformance
 If you encounter issues:
 - **Wrong kubectl context**: Stop immediately, switch to the correct context
 - **Conformance suite not found**: Verify `GATEWAY_CONFORMANCE_SUITE` is set correctly
-- **Multiple tests failing**: Address failing tests before enabling new ones
+- **Multiple tests failing**: Address failing tests before enabling new ones (Task 3)
 - **Stuck on a test**: Document findings, mark as `in-progress`, and consider moving to the next test with a note
 
 ## Helper Script: pick-next.sh
@@ -279,28 +457,10 @@ The `pick-next.sh` script automates:
 - **GATEWAY_CONFORMANCE_SUITE**: Environment variable pointing to the Gateway API repository clone
 - **ast-grep** (optional): The script will install it via cargo if not available, or fall back to sed
 
-### Example Workflow
-
-```bash
-# 1. See what test to work on next
-./pick-next.sh --show-next
-
-# 2. Enable the test (removes t.Skip() and marks as in-progress)
-./pick-next.sh
-
-# 3. Run conformance tests to see the failure
-cd $GATEWAY_CONFORMANCE_SUITE && make conformance
-
-# 4. Implement the fix in the multiway codebase
-
-# 5. Verify the fix passes
-cd $GATEWAY_CONFORMANCE_SUITE && make conformance
-
-# 6. Manually update the CSV to mark as 'true' when complete
-```
-
 ## Files and Directories
 
+- `./cluster-up.sh`: Provisions a DigitalOcean Kubernetes cluster for testing
+- `./cluster-down.sh`: Tears down the test cluster to avoid ongoing costs
 - `./pick-next.sh`: Helper script for development loop automation
 - `./test-tiers/*.csv`: Test priority lists and implementation status
 - `./bug-reports/`: Diagnostic reports for failing tests

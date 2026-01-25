@@ -309,7 +309,8 @@ build_and_push_images() {
     fi
 
     # Call the build script
-    "${SCRIPT_DIR}/build-docker.sh" "${build_args[@]}"
+    # Note: ${array[@]+...} syntax handles empty arrays with set -u
+    "${SCRIPT_DIR}/build-docker.sh" ${build_args[@]+"${build_args[@]}"}
 }
 
 # =============================================================================
