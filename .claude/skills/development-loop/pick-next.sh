@@ -249,6 +249,28 @@ list_all_tests() {
 }
 
 # =============================================================================
+# PORTABLE UTILITIES
+# =============================================================================
+
+#######################################
+# Portable sed -i that works on both macOS and Linux.
+# On macOS, sed -i requires an argument; on Linux it doesn't.
+# Arguments:
+#   $1 - sed expression
+#   $2 - file to edit
+#######################################
+sed_inplace() {
+    local expression="$1"
+    local file="$2"
+
+    if [[ "$(uname)" == "Darwin" ]]; then
+        sed -i '' "${expression}" "${file}"
+    else
+        sed -i "${expression}" "${file}"
+    fi
+}
+
+# =============================================================================
 # AST-GREP FUNCTIONS
 # =============================================================================
 
@@ -336,8 +358,9 @@ remove_skip_with_ast_grep() {
     fi
 
     # Create a temporary file for the ast-grep rule
+    # Use a portable approach that works on both macOS and Linux
     local rule_file
-    rule_file=$(mktemp --suffix=.yaml)
+    rule_file="${TMPDIR:-/tmp}/ast-grep-rule-$$.yaml"
 
     # Write the ast-grep rule to find and remove t.Skip() calls
     # This pattern matches t.Skip("reason") statements
@@ -382,7 +405,7 @@ remove_skip_with_sed() {
 
     # Remove lines containing t.Skip, t.Skipf, or t.SkipNow
     # This is a simple approach - ast-grep is more precise
-    sed -i '/[[:space:]]*t\.Skip\(f\?\|Now\)(/d' "${test_file}"
+    sed_inplace '/[[:space:]]*t\.Skip\(f\?\|Now\)(/d' "${test_file}"
 }
 
 #######################################
@@ -463,7 +486,7 @@ update_test_status() {
 
         if grep -q "^${test_name}," "${file_path}"; then
             # Update the status in place
-            sed -i "s/^\(${test_name},.*,\)[^,]*$/\1${new_status}/" "${file_path}"
+            sed_inplace "s/^\(${test_name},.*,\)[^,]*$/\1${new_status}/" "${file_path}"
             success "Updated ${test_name} in ${tier_file}"
             return 0
         fi
