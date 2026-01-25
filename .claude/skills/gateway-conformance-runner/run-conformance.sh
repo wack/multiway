@@ -280,95 +280,36 @@ not the conformance subdirectory. The repository should contain a 'conformance/'
 # BUILD AND PUSH IMAGES
 #
 # This phase compiles the Rust code, builds Docker images, and pushes them
-# to the container registry. Unlike Kind (which loads images directly into
-# the cluster), DigitalOcean clusters pull images from a registry, so we
-# must push images before they can be deployed.
+# to the container registry. The actual build logic is in build-docker.sh,
+# which can also be run standalone.
 # =============================================================================
 
 #######################################
-# Verifies that the Rust project compiles successfully.
-# This is a non-recoverable check - compilation errors require code fixes.
-# We run this before building Docker images to fail fast on code errors.
-#######################################
-verify_rust_compiles() {
-    info "Verifying Rust project compiles..."
-
-    if ! run_cmd cargo check; then
-        error_exit "Rust project failed to compile. Please fix the compilation errors and try again."
-    fi
-
-    success "Rust project compiles successfully"
-}
-
-#######################################
-# Builds the Docker images for control plane and data plane.
-# This is a non-recoverable operation - build failures require investigation.
-# The images are tagged for pushing to the container registry.
-# If DEV_BUILD is true, uses Dockerfile.dev for faster builds.
-#######################################
-build_docker_images() {
-    if [[ "${DEV_BUILD}" == true ]]; then
-        info "Building Docker images (dev mode - faster builds)..."
-        export DOCKERFILE="Dockerfile.dev"
-    else
-        info "Building Docker images..."
-    fi
-
-    if ! run_cmd cargo make docker-build-all; then
-        error_exit "Docker image build failed. Please check the build output for errors."
-    fi
-
-    success "Docker images built successfully"
-}
-
-#######################################
-# Pushes Docker images to the container registry.
-# Unlike Kind clusters (which use `kind load docker-image` to load images
-# directly), DigitalOcean clusters must pull images from a registry. This
-# function pushes the built images so the cluster can access them.
-# If DEV_BUILD is true, uses Dockerfile.dev for faster builds.
-#######################################
-push_images_to_registry() {
-    info "Pushing images to container registry..."
-
-    if [[ -z "${DOCKER_REGISTRY:-}" ]]; then
-        error_exit "DOCKER_REGISTRY environment variable is not set.
-Please set it to your container registry URL.
-Example: export DOCKER_REGISTRY=ghcr.io/myorg"
-    fi
-
-    # Ensure DOCKERFILE is set for dev builds (in case this is called independently)
-    if [[ "${DEV_BUILD}" == true ]]; then
-        export DOCKERFILE="Dockerfile.dev"
-    fi
-
-    if ! run_cmd cargo make do-push-images; then
-        error_exit "Failed to push images to registry"
-    fi
-
-    success "Images pushed to registry"
-}
-
-#######################################
-# Orchestrates the build and image push phase.
+# Orchestrates the build and image push phase by calling build-docker.sh.
 # Can be skipped with --skip-build flag for faster iteration when images
 # have already been built and pushed (e.g., when only re-running tests).
 #######################################
 build_and_push_images() {
-    info "=== Phase: Build and Push Images ==="
-
     if [[ "${SKIP_BUILD}" == true ]]; then
+        info "=== Phase: Build and Push Images ==="
         warn "Skipping build phase (--skip-build specified)"
         echo ""
         return 0
     fi
 
-    verify_rust_compiles
-    build_docker_images
-    push_images_to_registry
+    # Build arguments for build-docker.sh
+    local -a build_args=()
 
-    success "Build and push phase complete"
-    echo ""
+    if [[ "${DEV_BUILD}" == false ]]; then
+        build_args+=("--release")
+    fi
+
+    if [[ "${DRY_RUN}" == true ]]; then
+        build_args+=("--dry-run")
+    fi
+
+    # Call the build script
+    "${SCRIPT_DIR}/build-docker.sh" "${build_args[@]}"
 }
 
 # =============================================================================

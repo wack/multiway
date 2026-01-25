@@ -58,31 +58,6 @@ This project uses Kubernetes Gateway API CRDs. The CRD definitions are stored in
 - `cargo make gen-crds` - Regenerate Rust bindings from existing YAML files
 - `cargo make gateway-api-install` - Install CRDs into the current Kubernetes cluster
 
-## Conformance Tests
-
-The project includes infrastructure for running the official [Gateway API conformance test suite](https://gateway-api.sigs.k8s.io/concepts/conformance/) against the implementation.
-
-**Running conformance tests (full workflow):**
-```bash
-cargo make conformance
-```
-
-This builds the Docker image, loads it into kind, runs the tests as a Kubernetes Job, and outputs the logs.
-
-**Individual conformance commands:**
-- `cargo make conformance-build` - Build the conformance test Docker image
-- `cargo make conformance-load` - Load the image into kind cluster
-- `cargo make conformance-run` - Run the job and wait for completion
-- `cargo make conformance-logs` - View logs from the last run
-- `cargo make conformance-cleanup` - Delete the job and resources
-
-**Configuration:**
-The conformance tests are configured via environment variables in `conformance/job.yaml`:
-- `GATEWAY_CLASS_NAME` - Gateway class to test (default: `multiway`)
-- `SUPPORTED_FEATURES` - Comma-separated list of features (default: `Gateway,HTTPRoute`)
-- `CONFORMANCE_PROFILES` - Optional conformance profiles to run
-- `SHOW_DEBUG` - Enable debug output (`true`/`false`)
-
 ## Before Completing a Task
 
 Always validate your changes before considering a task complete:

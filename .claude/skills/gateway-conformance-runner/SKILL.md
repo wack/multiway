@@ -67,7 +67,7 @@ The script automates the conformance testing workflow (cluster is managed separa
 
 1. **Prerequisites Check**: Verifies Docker and kubectl are available, cluster is accessible
 2. **Environment Verification**: Checks that `GATEWAY_CONFORMANCE_SUITE` and `DOCKER_REGISTRY` environment variables are set
-3. **Build & Push**: Compiles the Rust project, builds Docker images, and pushes them to the container registry
+3. **Build & Push**: Calls `build-docker.sh` to compile the Rust project, build Docker images, and push them to the container registry (can be run standalone)
 4. **Deploy**: Cleans up any existing deployments, installs Gateway API CRDs, creates a fresh namespace, deploys the gateway controller, and waits for pods to be ready
 5. **Test Execution**: Runs the conformance tests from the local Gateway API repository
 
@@ -108,6 +108,50 @@ Before running the skill, ensure:
 .claude/skills/gateway-conformance-runner/run-conformance.sh --dry-run
 ```
 
+# Building Docker Images
+
+The `build-docker.sh` script handles Docker image building and pushing separately from the full conformance workflow. This is useful when you want to build images without running tests, or when troubleshooting build issues.
+
+## Basic Usage
+
+```bash
+.claude/skills/gateway-conformance-runner/build-docker.sh
+```
+
+## Script Options
+
+| Option | Description |
+|--------|-------------|
+| `--release` | Use production Dockerfile (higher optimization, slower builds) |
+| `--skip-push` | Build images but don't push to registry |
+| `--dry-run` | Print commands without executing them |
+| `--help` | Show help message |
+
+## What the Script Does
+
+1. **Prerequisites Check**: Verifies Docker is running
+2. **Rust Compilation**: Runs `cargo check` to verify the project compiles
+3. **Docker Build**: Builds control plane and data plane images using `cargo make docker-build-all`
+4. **Push to Registry**: Pushes images to the configured `DOCKER_REGISTRY` using `cargo make do-push-images`
+
+## Example Commands
+
+```bash
+# Build and push images (dev mode - faster builds)
+.claude/skills/gateway-conformance-runner/build-docker.sh
+
+# Build release images (production optimization)
+.claude/skills/gateway-conformance-runner/build-docker.sh --release
+
+# Build only, don't push to registry
+.claude/skills/gateway-conformance-runner/build-docker.sh --skip-push
+
+# Preview what would be executed
+.claude/skills/gateway-conformance-runner/build-docker.sh --dry-run
+```
+
+**Note**: The `run-conformance.sh` script calls `build-docker.sh` internally during its build phase. Use `--skip-build` with `run-conformance.sh` to skip this step if images are already built.
+
 # Reporting Results
 
 When reporting test results to the user:
@@ -127,7 +171,7 @@ you may wish to invoke to get conformance testing back on track.
 If the script fails, consider these responsibilities:
 
 1. **Cluster Management**: The `cluster-up.sh` and `cluster-down.sh` scripts handle cluster lifecycle
-2. **Build Pipeline**: Build Docker images for the gateway controller and ensure they're properly pushed to the container registry
+2. **Build Pipeline**: Use `build-docker.sh` to build and push Docker images for the gateway controller
 3. **Deployment**: Deploy the gateway controller and all necessary CRDs following the project's established patterns
 4. **Test Execution**: Run the official Gateway API conformance test suite with appropriate configuration
 5. **Results Analysis**: Retrieve and interpret test logs, identifying failures and their root causes
@@ -147,12 +191,12 @@ When encountering issues:
 2. Ensure the DigitalOcean cluster is clean before running tests to avoid state pollution
 3. Verify all prerequisites (Docker, doctl, kubectl, Go) are installed and functioning
 4. Verify that the Rust project will compile before building Docker images: `cargo check`
-5. Use `cargo make conformance-cleanup` between test runs to ensure clean state (in-cluster only)
-6. Check that the gateway controller is fully deployed before running tests
-7. The shutdown hook will delete the cluster automatically; if running manually, use `cluster-down.sh`
+5. Check that the gateway controller is fully deployed before running tests
+6. The shutdown hook will delete the cluster automatically; if running manually, use `cluster-down.sh`
 
 **Available Docker Build Commands**:
-The project provides several cargo make tasks for building Docker images:
+- `build-docker.sh` - Build and push Docker images (recommended - handles full workflow)
+- `build-docker.sh --skip-push` - Build images without pushing to registry
 - `cargo make docker-build-all` - Build both control plane and data plane for current platform
 - `cargo make docker-build-controlplane` - Build only control plane
 - `cargo make docker-build-dataplane` - Build only data plane
