@@ -80,6 +80,66 @@ pub struct RedirectAction {
     pub status_code: u16,
 }
 
+/// Match specificity for sorting routes per Gateway API spec.
+///
+/// Precedence (from highest to lowest):
+/// 1. Exact path match
+/// 2. Prefix path match with largest number of characters
+/// 3. Method match
+/// 4. Largest number of header matches
+/// 5. Largest number of query param matches
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MatchSpecificity {
+    /// Whether this is an exact path match (highest priority)
+    is_exact_path: bool,
+    /// Length of the path prefix (longer = higher priority)
+    path_prefix_len: usize,
+    /// Whether there's a method match
+    has_method_match: bool,
+    /// Number of header matches
+    header_match_count: usize,
+    /// Number of query param matches
+    query_param_match_count: usize,
+}
+
+impl Ord for MatchSpecificity {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // 1. Exact path match takes priority
+        match self.is_exact_path.cmp(&other.is_exact_path) {
+            std::cmp::Ordering::Equal => {}
+            ord => return ord,
+        }
+
+        // 2. Longer path prefix takes priority
+        match self.path_prefix_len.cmp(&other.path_prefix_len) {
+            std::cmp::Ordering::Equal => {}
+            ord => return ord,
+        }
+
+        // 3. Method match takes priority
+        match self.has_method_match.cmp(&other.has_method_match) {
+            std::cmp::Ordering::Equal => {}
+            ord => return ord,
+        }
+
+        // 4. More header matches takes priority
+        match self.header_match_count.cmp(&other.header_match_count) {
+            std::cmp::Ordering::Equal => {}
+            ord => return ord,
+        }
+
+        // 5. More query param matches takes priority
+        self.query_param_match_count
+            .cmp(&other.query_param_match_count)
+    }
+}
+
+impl PartialOrd for MatchSpecificity {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 /// HTTP Router that matches requests to routes
 pub struct Router {
     /// Compiled regex patterns for path matching
@@ -123,6 +183,13 @@ impl Router {
     }
 
     /// Route a request
+    ///
+    /// Per the Gateway API specification, matches are prioritized based on:
+    /// 1. Exact path match
+    /// 2. Prefix path match with largest number of characters
+    /// 3. Method match
+    /// 4. Largest number of header matches
+    /// 5. Largest number of query param matches
     pub fn route(
         &self,
         config: &GatewayConfig,
@@ -136,6 +203,9 @@ impl Router {
             method = request.method,
             "Routing request"
         );
+
+        // Collect all matching rules with their specificity scores
+        let mut matches: Vec<(MatchSpecificity, &RouteConfig, &RouteRule)> = Vec::new();
 
         // Find matching routes for this listener
         for route in &config.routes {
@@ -152,25 +222,32 @@ impl Router {
                 continue;
             }
 
-            // Check rules
+            // Check rules and collect matches with specificity
             for rule in &route.rules {
-                if let Some(result) = self.try_match_rule(
-                    route,
+                if let Some(specificity) = self.match_rule_with_specificity(
                     rule,
                     request.path,
                     request.method,
                     request.headers,
                     request.query_params,
                 ) {
-                    return result;
+                    matches.push((specificity, route, rule));
                 }
             }
         }
 
-        // No match found
-        RoutingResult {
-            route: None,
-            redirect: None,
+        // Sort by specificity (highest priority first)
+        matches.sort_by(|a, b| b.0.cmp(&a.0));
+
+        // Return the highest priority match
+        if let Some((_, route, rule)) = matches.first() {
+            self.create_result(route, rule, request.path)
+        } else {
+            // No match found
+            RoutingResult {
+                route: None,
+                redirect: None,
+            }
         }
     }
 
@@ -203,6 +280,79 @@ impl Router {
         false
     }
 
+    /// Match a rule and return its specificity if it matches.
+    ///
+    /// Per Gateway API spec, multiple matches within a rule have OR semantics,
+    /// so we return the highest specificity among matching entries.
+    fn match_rule_with_specificity(
+        &self,
+        rule: &RouteRule,
+        path: &str,
+        method: &str,
+        headers: &[(String, String)],
+        query_params: &[(String, String)],
+    ) -> Option<MatchSpecificity> {
+        // Per spec: "If no matches are specified, the default is a prefix
+        // path match on '/', which has the effect of matching every HTTP request."
+        if rule.matches.is_empty() {
+            return Some(MatchSpecificity {
+                is_exact_path: false,
+                path_prefix_len: 1, // Default "/" prefix has length 1
+                has_method_match: false,
+                header_match_count: 0,
+                query_param_match_count: 0,
+            });
+        }
+
+        // OR semantics between matches - find the highest specificity match
+        let mut best_specificity: Option<MatchSpecificity> = None;
+
+        for route_match in &rule.matches {
+            if self.matches(route_match, path, method, headers, query_params) {
+                let specificity = self.calculate_specificity(route_match);
+                if let Some(ref best) = best_specificity {
+                    if specificity > *best {
+                        best_specificity = Some(specificity);
+                    }
+                } else {
+                    best_specificity = Some(specificity);
+                }
+            }
+        }
+
+        best_specificity
+    }
+
+    /// Calculate the specificity of a route match
+    ///
+    /// Per Gateway API spec: "If no matches are specified, the default is a prefix
+    /// path match on '/', which has the effect of matching every HTTP request."
+    /// This means a match without a path implicitly has path prefix "/" (length 1).
+    fn calculate_specificity(&self, route_match: &RouteMatch) -> MatchSpecificity {
+        let (is_exact_path, path_prefix_len) = match &route_match.path {
+            Some(path_match) => match path_match.match_type {
+                PathMatchType::Exact => (true, path_match.value.len()),
+                PathMatchType::PathPrefix => (false, path_match.value.len()),
+                PathMatchType::RegularExpression => {
+                    // Regex matches have implementation-specific precedence
+                    // We treat them as lower priority than exact/prefix
+                    (false, 0)
+                }
+            },
+            // Per spec, no path means implicit "/" prefix (length 1)
+            None => (false, 1),
+        };
+
+        MatchSpecificity {
+            is_exact_path,
+            path_prefix_len,
+            has_method_match: route_match.method.is_some(),
+            header_match_count: route_match.headers.len(),
+            query_param_match_count: route_match.query_params.len(),
+        }
+    }
+
+    #[allow(dead_code)]
     fn try_match_rule(
         &self,
         route: &RouteConfig,
@@ -1389,5 +1539,321 @@ mod tests {
             &[],
         );
         assert!(result.route.is_some());
+    }
+
+    // ==========================================
+    // Match Precedence Tests (Gateway API Spec)
+    // ==========================================
+
+    /// Spec: Longer path prefix takes precedence over shorter path prefix
+    ///
+    /// This test mirrors the HTTPRouteMatching conformance test which validates
+    /// that `/v2` prefix matches before `/` prefix for requests to `/v2/*`.
+    #[test]
+    fn test_path_prefix_precedence_longer_wins() {
+        let mut config = create_test_config();
+        config.routes[0].hostnames = vec![]; // Match all hosts
+
+        // Rule 1: PathPrefix "/" -> backend-v1
+        // Rule 2: PathPrefix "/v2" -> backend-v2
+        // Per spec, longer prefix should win
+        config.routes[0].rules = vec![
+            RouteRule {
+                name: None,
+                matches: vec![RouteMatch {
+                    path: Some(PathMatch {
+                        match_type: PathMatchType::PathPrefix,
+                        value: "/".to_string(),
+                    }),
+                    headers: vec![],
+                    query_params: vec![],
+                    method: None,
+                }],
+                filters: vec![],
+                backends: vec![BackendRef {
+                    namespace: "default".to_string(),
+                    name: "backend-v1".to_string(),
+                    port: 8080,
+                    weight: 1,
+                }],
+                timeout: None,
+            },
+            RouteRule {
+                name: None,
+                matches: vec![RouteMatch {
+                    path: Some(PathMatch {
+                        match_type: PathMatchType::PathPrefix,
+                        value: "/v2".to_string(),
+                    }),
+                    headers: vec![],
+                    query_params: vec![],
+                    method: None,
+                }],
+                filters: vec![],
+                backends: vec![BackendRef {
+                    namespace: "default".to_string(),
+                    name: "backend-v2".to_string(),
+                    port: 8080,
+                    weight: 1,
+                }],
+                timeout: None,
+            },
+        ];
+        let router = Router::new(&config);
+
+        // Request to "/" should go to backend-v1
+        let result = router.route_test(&config, "http", Some("example.com"), "/", "GET", &[], &[]);
+        assert!(result.route.is_some());
+        let route = result.route.unwrap();
+        assert_eq!(route.backends[0].name, "backend-v1");
+
+        // Request to "/example" should go to backend-v1 (matches "/" prefix)
+        let result = router.route_test(
+            &config,
+            "http",
+            Some("example.com"),
+            "/example",
+            "GET",
+            &[],
+            &[],
+        );
+        assert!(result.route.is_some());
+        let route = result.route.unwrap();
+        assert_eq!(route.backends[0].name, "backend-v1");
+
+        // Request to "/v2" should go to backend-v2 (longer prefix wins)
+        let result =
+            router.route_test(&config, "http", Some("example.com"), "/v2", "GET", &[], &[]);
+        assert!(result.route.is_some());
+        let route = result.route.unwrap();
+        assert_eq!(route.backends[0].name, "backend-v2");
+
+        // Request to "/v2/example" should go to backend-v2 (longer prefix wins)
+        let result = router.route_test(
+            &config,
+            "http",
+            Some("example.com"),
+            "/v2/example",
+            "GET",
+            &[],
+            &[],
+        );
+        assert!(result.route.is_some());
+        let route = result.route.unwrap();
+        assert_eq!(route.backends[0].name, "backend-v2");
+
+        // Request to "/v2example" should go to backend-v1 (no "/" boundary after /v2)
+        let result = router.route_test(
+            &config,
+            "http",
+            Some("example.com"),
+            "/v2example",
+            "GET",
+            &[],
+            &[],
+        );
+        assert!(result.route.is_some());
+        let route = result.route.unwrap();
+        assert_eq!(route.backends[0].name, "backend-v1");
+    }
+
+    /// Spec: Header matches affect precedence
+    ///
+    /// This test validates that rules with more header matches take precedence
+    /// when path matches are equal.
+    #[test]
+    fn test_header_match_precedence() {
+        let mut config = create_test_config();
+        config.routes[0].hostnames = vec![]; // Match all hosts
+
+        // Rule 1: PathPrefix "/" with header Version=one -> backend-v1
+        // Rule 2: PathPrefix "/" with header Version=two -> backend-v2
+        config.routes[0].rules = vec![
+            RouteRule {
+                name: None,
+                matches: vec![
+                    // Match 1: "/" prefix (fallback)
+                    RouteMatch {
+                        path: Some(PathMatch {
+                            match_type: PathMatchType::PathPrefix,
+                            value: "/".to_string(),
+                        }),
+                        headers: vec![],
+                        query_params: vec![],
+                        method: None,
+                    },
+                    // Match 2: header Version=one
+                    RouteMatch {
+                        path: None,
+                        headers: vec![HeaderMatch {
+                            name: "version".to_string(),
+                            match_type: HeaderMatchType::Exact,
+                            value: "one".to_string(),
+                        }],
+                        query_params: vec![],
+                        method: None,
+                    },
+                ],
+                filters: vec![],
+                backends: vec![BackendRef {
+                    namespace: "default".to_string(),
+                    name: "backend-v1".to_string(),
+                    port: 8080,
+                    weight: 1,
+                }],
+                timeout: None,
+            },
+            RouteRule {
+                name: None,
+                matches: vec![
+                    // Match 1: "/v2" prefix
+                    RouteMatch {
+                        path: Some(PathMatch {
+                            match_type: PathMatchType::PathPrefix,
+                            value: "/v2".to_string(),
+                        }),
+                        headers: vec![],
+                        query_params: vec![],
+                        method: None,
+                    },
+                    // Match 2: header Version=two
+                    RouteMatch {
+                        path: None,
+                        headers: vec![HeaderMatch {
+                            name: "version".to_string(),
+                            match_type: HeaderMatchType::Exact,
+                            value: "two".to_string(),
+                        }],
+                        query_params: vec![],
+                        method: None,
+                    },
+                ],
+                filters: vec![],
+                backends: vec![BackendRef {
+                    namespace: "default".to_string(),
+                    name: "backend-v2".to_string(),
+                    port: 8080,
+                    weight: 1,
+                }],
+                timeout: None,
+            },
+        ];
+        let router = Router::new(&config);
+
+        // Request with header Version=one should go to backend-v1
+        let result = router.route_test(
+            &config,
+            "http",
+            Some("example.com"),
+            "/",
+            "GET",
+            &[("version".to_string(), "one".to_string())],
+            &[],
+        );
+        assert!(result.route.is_some());
+        let route = result.route.unwrap();
+        assert_eq!(route.backends[0].name, "backend-v1");
+
+        // Request with header Version=two should go to backend-v2
+        let result = router.route_test(
+            &config,
+            "http",
+            Some("example.com"),
+            "/",
+            "GET",
+            &[("version".to_string(), "two".to_string())],
+            &[],
+        );
+        assert!(result.route.is_some());
+        let route = result.route.unwrap();
+        assert_eq!(route.backends[0].name, "backend-v2");
+
+        // Request to /v2 without headers should go to backend-v2 (longer path prefix)
+        let result =
+            router.route_test(&config, "http", Some("example.com"), "/v2", "GET", &[], &[]);
+        assert!(result.route.is_some());
+        let route = result.route.unwrap();
+        assert_eq!(route.backends[0].name, "backend-v2");
+    }
+
+    /// Spec: Exact path match takes precedence over prefix match
+    #[test]
+    fn test_exact_path_precedence_over_prefix() {
+        let mut config = create_test_config();
+        config.routes[0].hostnames = vec![]; // Match all hosts
+
+        // Rule 1: PathPrefix "/api" -> backend-prefix
+        // Rule 2: Exact "/api/users" -> backend-exact
+        config.routes[0].rules = vec![
+            RouteRule {
+                name: None,
+                matches: vec![RouteMatch {
+                    path: Some(PathMatch {
+                        match_type: PathMatchType::PathPrefix,
+                        value: "/api".to_string(),
+                    }),
+                    headers: vec![],
+                    query_params: vec![],
+                    method: None,
+                }],
+                filters: vec![],
+                backends: vec![BackendRef {
+                    namespace: "default".to_string(),
+                    name: "backend-prefix".to_string(),
+                    port: 8080,
+                    weight: 1,
+                }],
+                timeout: None,
+            },
+            RouteRule {
+                name: None,
+                matches: vec![RouteMatch {
+                    path: Some(PathMatch {
+                        match_type: PathMatchType::Exact,
+                        value: "/api/users".to_string(),
+                    }),
+                    headers: vec![],
+                    query_params: vec![],
+                    method: None,
+                }],
+                filters: vec![],
+                backends: vec![BackendRef {
+                    namespace: "default".to_string(),
+                    name: "backend-exact".to_string(),
+                    port: 8080,
+                    weight: 1,
+                }],
+                timeout: None,
+            },
+        ];
+        let router = Router::new(&config);
+
+        // Request to "/api/users" should go to backend-exact (exact match wins)
+        let result = router.route_test(
+            &config,
+            "http",
+            Some("example.com"),
+            "/api/users",
+            "GET",
+            &[],
+            &[],
+        );
+        assert!(result.route.is_some());
+        let route = result.route.unwrap();
+        assert_eq!(route.backends[0].name, "backend-exact");
+
+        // Request to "/api/other" should go to backend-prefix (prefix match)
+        let result = router.route_test(
+            &config,
+            "http",
+            Some("example.com"),
+            "/api/other",
+            "GET",
+            &[],
+            &[],
+        );
+        assert!(result.route.is_some());
+        let route = result.route.unwrap();
+        assert_eq!(route.backends[0].name, "backend-prefix");
     }
 }
