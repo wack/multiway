@@ -9,9 +9,9 @@ use std::time::Duration;
 
 use chrono::DateTime;
 use gateway_crds::{
-    Gateway, GatewayClassStatus, GatewayClassStatusSupportedFeatures, GatewayStatus,
-    GatewayStatusAddresses, GatewayStatusListeners, GatewayStatusListenersSupportedKinds,
-    HttpRouteStatus, HttpRouteStatusParents, HttpRouteStatusParentsParentRef,
+    Gateway, GatewayClassStatus, GatewayStatus, GatewayStatusAddresses, GatewayStatusListeners,
+    GatewayStatusListenersSupportedKinds, HttpRouteStatus, HttpRouteStatusParents,
+    HttpRouteStatusParentsParentRef,
 };
 use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec};
 use k8s_openapi::api::core::v1::{
@@ -30,8 +30,8 @@ use kube::{Resource, ResourceExt};
 use super::result::ReconcileResult;
 use super::snapshot::WorldSnapshot;
 use super::validate::{
-    SUPPORTED_FEATURES, get_accepted_gateway_class, is_our_gateway_class, validate_gateway_class,
-    validate_listeners, validate_parent_ref,
+    get_accepted_gateway_class, is_our_gateway_class, validate_gateway_class, validate_listeners,
+    validate_parent_ref,
 };
 use crate::controller::config::{
     CONFIG_KEY, DataPlaneNames, GatewayConfig, ListenerConfig, Protocol,
@@ -109,16 +109,9 @@ fn build_gateway_class_status(
         message: message.to_string(),
     };
 
-    let supported_features: Vec<GatewayClassStatusSupportedFeatures> = SUPPORTED_FEATURES
-        .iter()
-        .map(|f| GatewayClassStatusSupportedFeatures {
-            name: f.to_string(),
-        })
-        .collect();
-
+    // Note: supported_features field not available in Gateway API v1.2.1
     GatewayClassStatus {
         conditions: Some(vec![condition]),
-        supported_features: Some(supported_features),
     }
 }
 
@@ -754,7 +747,7 @@ fn build_parent_status(
             port: parent_ref.port,
             section_name: parent_ref.section_name.clone(),
         },
-        conditions: vec![
+        conditions: Some(vec![
             Condition {
                 type_: "Accepted".to_string(),
                 status: status_value.to_string(),
@@ -771,7 +764,7 @@ fn build_parent_status(
                 reason: if accepted { "ResolvedRefs" } else { reason }.to_string(),
                 message: message.to_string(),
             },
-        ],
+        ]),
     }
 }
 
@@ -824,7 +817,6 @@ mod tests {
                     reason: "Accepted".to_string(),
                     message: "Accepted".to_string(),
                 }]),
-                supported_features: None,
             }),
         }
     }
@@ -936,8 +928,7 @@ mod tests {
         assert_eq!(conditions[0].type_, "Accepted");
         assert_eq!(conditions[0].status, "True");
 
-        // Should have supported features
-        assert!(status.supported_features.is_some());
+        // Note: supported_features field not available in Gateway API v1.2.1
     }
 
     // ========================================
@@ -1095,6 +1086,8 @@ mod tests {
 
         let accepted = status.parents[0]
             .conditions
+            .as_ref()
+            .unwrap()
             .iter()
             .find(|c| c.type_ == "Accepted")
             .unwrap();
@@ -1125,6 +1118,8 @@ mod tests {
 
         let accepted = status.parents[0]
             .conditions
+            .as_ref()
+            .unwrap()
             .iter()
             .find(|c| c.type_ == "Accepted")
             .unwrap();

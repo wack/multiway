@@ -137,8 +137,9 @@ pub fn convert_httproute_to_config(
 
 /// Convert an HTTPRoute rule to our internal format
 fn convert_rule(rule: &HttpRouteRules, route_namespace: &str) -> Result<RouteRule> {
+    // Note: rule.name field not available in Gateway API v1.2.1
     let mut route_rule = RouteRule {
-        name: rule.name.clone(),
+        name: None,
         matches: Vec::new(),
         filters: Vec::new(),
         backends: Vec::new(),
@@ -407,7 +408,8 @@ fn convert_filter(filter: &HttpRouteRulesFilters) -> Result<Option<RouteFilter>>
                         &backend_ref.name,
                         backend_ref.port.unwrap_or(80) as u16,
                     ),
-                    percent: mirror.percent.map(|p| p as u32),
+                    // Note: percent field not available in Gateway API v1.2.1
+                    percent: None,
                 }))
             } else {
                 Ok(None)
@@ -888,8 +890,8 @@ mod tests {
     /// Spec: Rule with no matches should match all requests
     #[test]
     fn test_convert_rule_no_matches() {
+        // Note: name field not available in Gateway API v1.2.1
         let rule = HttpRouteRules {
-            name: Some("catch-all".to_string()),
             matches: None,
             filters: None,
             backend_refs: Some(vec![HttpRouteRulesBackendRefs {
@@ -905,7 +907,8 @@ mod tests {
         };
 
         let result = convert_rule(&rule, "default").unwrap();
-        assert_eq!(result.name, Some("catch-all".to_string()));
+        // Note: name field not available in Gateway API v1.2.1
+        assert_eq!(result.name, None);
         // Should have a default match
         assert_eq!(result.matches.len(), 1);
         assert!(result.matches[0].path.is_none());
@@ -914,8 +917,8 @@ mod tests {
     /// Spec: Rule with timeouts
     #[test]
     fn test_convert_rule_with_timeouts() {
+        // Note: name field not available in Gateway API v1.2.1
         let rule = HttpRouteRules {
-            name: None,
             matches: None,
             filters: None,
             backend_refs: Some(vec![HttpRouteRulesBackendRefs {
