@@ -22,7 +22,7 @@ spec:
       containers:
         - name: controller
           image: multiway-controlplane:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           args:
             - controller
             - --dataplane-image=ghcr.io/wack/multiway-dataplane:latest

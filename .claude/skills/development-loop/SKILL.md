@@ -49,18 +49,94 @@ Each CSV file has the following columns:
 
 ## Workflow Tasks
 
-### Task 1: Provision Test Cluster
+### Initialize All Tasks
 
-Before starting the development loop, you must ensure a Kubernetes cluster is available for running conformance tests.
+Before starting any work, create all tasks in the task list. This provides visibility into the full workflow and allows proper dependency tracking.
 
-**Create a task using the `TaskCreate` tool:**
+**Create all tasks using the `TaskCreate` tool:**
 
 ```
 TaskCreate:
   subject: "Provision test cluster"
   description: "Execute the cluster-up.sh script located at .claude/skills/development-loop/cluster-up.sh to provision a DigitalOcean Kubernetes cluster for conformance testing. This script handles cluster creation, kubeconfig setup, and installs required Gateway API CRDs."
   activeForm: "Provisioning test cluster"
+
+TaskCreate:
+  subject: "Run conformance tests"
+  description: "Use the conformance skill to build and load docker images, then run the Gateway API conformance test suite. This establishes the baseline state of passing and failing tests."
+  activeForm: "Running conformance tests"
+
+TaskCreate:
+  subject: "Resolve failing tests"
+  description: "Fix the failing conformance tests identified in the previous run. All existing tests must pass before enabling new tests. Diagnose each failure, implement fixes, and verify with the conformance skill."
+  activeForm: "Resolving failing tests"
+
+TaskCreate:
+  subject: "Select the next test"
+  description: "Run pick-next.sh to identify and enable the highest-priority unimplemented test from the tier CSV files."
+  activeForm: "Selecting next test"
+
+TaskCreate:
+  subject: "Verify test is currently skipped"
+  description: "Run the conformance skill to confirm that the selected test is currently skipped (not running) and that all other enabled tests are passing."
+  activeForm: "Verifying test is skipped"
+
+TaskCreate:
+  subject: "Enable test and observe failure"
+  description: "Enable the selected test by removing it from the skip list, run the conformance suite, and capture the failure output for diagnosis."
+  activeForm: "Enabling test and observing failure"
+
+TaskCreate:
+  subject: "Handle test results"
+  description: "Evaluate whether the newly enabled test passed or failed, and determine the next action in the workflow."
+  activeForm: "Handling test results"
+
+TaskCreate:
+  subject: "Diagnose the failure"
+  description: "Investigate the root cause of the test failure through unit test creation, code analysis, and bug report documentation."
+  activeForm: "Diagnosing failure"
+
+TaskCreate:
+  subject: "Implement the fix"
+  description: "Make the necessary code changes to fix the identified issue, keeping changes minimal and focused on the specific test."
+  activeForm: "Implementing fix"
+
+TaskCreate:
+  subject: "Verify the fix"
+  description: "Run unit tests and the full conformance suite to verify that the fix works and no regressions were introduced."
+  activeForm: "Verifying fix"
+
+TaskCreate:
+  subject: "Document and report"
+  description: "Update the CSV status to mark the test as implemented, and create a summary report documenting the changes made."
+  activeForm: "Documenting results"
+
+TaskCreate:
+  subject: "Tear down cluster"
+  description: "Execute the cluster-down.sh script to destroy the DigitalOcean Kubernetes cluster and avoid ongoing costs."
+  activeForm: "Tearing down cluster"
 ```
+
+**Set up task dependencies using the `TaskUpdate` tool:**
+
+After creating all tasks, establish dependencies:
+- "Run conformance tests" is blocked by "Provision test cluster"
+- "Select the next test" is blocked by "Run conformance tests"
+- "Verify test is currently skipped" is blocked by "Select the next test"
+- "Enable test and observe failure" is blocked by "Verify test is currently skipped"
+- "Handle test results" is blocked by "Enable test and observe failure"
+
+Note: Some tasks are conditional (e.g., "Resolve failing tests" only runs if tests fail, "Diagnose the failure" only runs if the test doesn't pass immediately). These should not have blockedBy dependencies set upfront since they may be skipped.
+
+Once all tasks are created and dependencies are set, proceed with Task 1.
+
+---
+
+### Task 1: Provision Test Cluster
+
+Before starting the development loop, you must ensure a Kubernetes cluster is available for running conformance tests.
+
+**Mark the "Provision test cluster" task as `in_progress` using `TaskUpdate`.**
 
 **Execute the script:**
 
@@ -80,14 +156,7 @@ Once the cluster is provisioned, mark the task as completed and proceed to Task 
 
 After the cluster is available, run the conformance test suite to establish the current state.
 
-**Create a task using the `TaskCreate` tool:**
-
-```
-TaskCreate:
-  subject: "Run conformance tests"
-  description: "Use the conformance skill to build and load docker images, then run the Gateway API conformance test suite. This establishes the baseline state of passing and failing tests."
-  activeForm: "Running conformance tests"
-```
+**Mark the "Run conformance tests" task as `in_progress` using `TaskUpdate`.**
 
 **Execute the conformance skill:**
 
@@ -105,14 +174,7 @@ Use the `conformance` skill to run the test suite. This skill will:
 
 If Task 2 revealed failing tests, they must be resolved before enabling any new tests.
 
-**Create a task using the `TaskCreate` tool:**
-
-```
-TaskCreate:
-  subject: "Resolve failing tests"
-  description: "Fix the failing conformance tests identified in the previous run. All existing tests must pass before enabling new tests. Diagnose each failure, implement fixes, and verify with the conformance skill."
-  activeForm: "Resolving failing tests"
-```
+**Mark the "Resolve failing tests" task as `in_progress` using `TaskUpdate`.**
 
 **For each failing test:**
 1. Diagnose the failure (see Task 8 for diagnosis techniques)
@@ -126,14 +188,7 @@ Once all tests pass, mark this task as completed and proceed to Task 4.
 
 Use the `pick-next.sh` helper script to select and enable the next test.
 
-**Create a task using the `TaskCreate` tool:**
-
-```
-TaskCreate:
-  subject: "Select the next test"
-  description: "Run pick-next.sh to identify and enable the highest-priority unimplemented test from the tier CSV files."
-  activeForm: "Selecting next test"
-```
+**Mark the "Select the next test" task as `in_progress` using `TaskUpdate`.**
 
 **Execute the script:**
 
@@ -162,14 +217,7 @@ The script will:
 
 Before making any code changes, verify the current state.
 
-**Create a task using the `TaskCreate` tool:**
-
-```
-TaskCreate:
-  subject: "Verify test is currently skipped"
-  description: "Run the conformance skill to confirm that the selected test is currently skipped (not running) and that all other enabled tests are passing."
-  activeForm: "Verifying test is skipped"
-```
+**Mark the "Verify test is currently skipped" task as `in_progress` using `TaskUpdate`.**
 
 **Verification steps:**
 1. Ensure the `GATEWAY_CONFORMANCE_SUITE` environment variable is set
@@ -184,14 +232,7 @@ If other tests are failing, return to Task 3 to resolve them before proceeding.
 
 Enable the test and capture the failure output.
 
-**Create a task using the `TaskCreate` tool:**
-
-```
-TaskCreate:
-  subject: "Enable test and observe failure"
-  description: "Enable the selected test by removing it from the skip list, run the conformance suite, and capture the failure output for diagnosis."
-  activeForm: "Enabling test and observing failure"
-```
+**Mark the "Enable test and observe failure" task as `in_progress` using `TaskUpdate`.**
 
 **Execution:**
 1. Enable the test by removing it from the skip list or adding it to the enabled tests
@@ -203,14 +244,7 @@ TaskCreate:
 
 Evaluate the test results and determine next action.
 
-**Create a task using the `TaskCreate` tool:**
-
-```
-TaskCreate:
-  subject: "Handle test results"
-  description: "Evaluate whether the newly enabled test passed or failed, and determine the next action in the workflow."
-  activeForm: "Handling test results"
-```
+**Mark the "Handle test results" task as `in_progress` using `TaskUpdate`.**
 
 **If the test passes immediately:**
 - Update the CSV file to change `implemented` from `in-progress` to `true`
@@ -224,14 +258,7 @@ TaskCreate:
 
 Investigate the root cause of the test failure.
 
-**Create a task using the `TaskCreate` tool:**
-
-```
-TaskCreate:
-  subject: "Diagnose the failure"
-  description: "Investigate the root cause of the test failure through unit test creation, code analysis, and bug report documentation."
-  activeForm: "Diagnosing failure"
-```
+**Mark the "Diagnose the failure" task as `in_progress` using `TaskUpdate`.**
 
 #### 8a: Attempt to Create a Unit Test (Recommended)
 
@@ -289,14 +316,7 @@ Create a Markdown file in `./bug-reports/` documenting:
 
 Make the necessary code changes to address the failure.
 
-**Create a task using the `TaskCreate` tool:**
-
-```
-TaskCreate:
-  subject: "Implement the fix"
-  description: "Make the necessary code changes to fix the identified issue, keeping changes minimal and focused on the specific test."
-  activeForm: "Implementing fix"
-```
+**Mark the "Implement the fix" task as `in_progress` using `TaskUpdate`.**
 
 **Guidelines:**
 1. Make the necessary code changes to fix the identified issue
@@ -307,14 +327,7 @@ TaskCreate:
 
 Confirm that the fix resolves the test failure.
 
-**Create a task using the `TaskCreate` tool:**
-
-```
-TaskCreate:
-  subject: "Verify the fix"
-  description: "Run unit tests and the full conformance suite to verify that the fix works and no regressions were introduced."
-  activeForm: "Verifying fix"
-```
+**Mark the "Verify the fix" task as `in_progress` using `TaskUpdate`.**
 
 **Verification steps:**
 1. If you created a unit test in Task 8a, run it first:
@@ -334,14 +347,7 @@ TaskCreate:
 
 Record the results of the completed test implementation.
 
-**Create a task using the `TaskCreate` tool:**
-
-```
-TaskCreate:
-  subject: "Document and report"
-  description: "Update the CSV status to mark the test as implemented, and create a summary report documenting the changes made."
-  activeForm: "Documenting results"
-```
+**Mark the "Document and report" task as `in_progress` using `TaskUpdate`.**
 
 **Documentation steps:**
 
@@ -380,14 +386,7 @@ TaskCreate:
 
 When the development session is complete, clean up the cluster resources.
 
-**Create a task using the `TaskCreate` tool:**
-
-```
-TaskCreate:
-  subject: "Tear down cluster"
-  description: "Execute the cluster-down.sh script to destroy the DigitalOcean Kubernetes cluster and avoid ongoing costs."
-  activeForm: "Tearing down cluster"
-```
+**Mark the "Tear down cluster" task as `in_progress` using `TaskUpdate`.**
 
 **Execute the script:**
 
