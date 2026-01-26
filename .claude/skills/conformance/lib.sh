@@ -185,7 +185,7 @@ sanitize_cluster_name() {
     # Collapse multiple consecutive hyphens into one
     # Using extglob for this pattern
     shopt -s extglob
-    name="${name//+(-)/\-}"
+    name="${name//+(-)/-}"
     shopt -u extglob
 
     # Remove leading and trailing hyphens

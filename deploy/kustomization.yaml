@@ -13,10 +13,10 @@ resources:
 
 images:
   - name: multiway-controlplane
-    newName: multiway-controlplane
+    newName: ghcr.io/wack/multiway-controlplane
     newTag: latest
   - name: multiway-dataplane
-    newName: multiway-dataplane
+    newName: ghcr.io/wack/multiway-dataplane
     newTag: latest
 
 labels:

@@ -468,6 +468,19 @@ The `pick-next.sh` script automates:
 - `./bug-reports/`: Diagnostic reports for failing tests
 - `$GATEWAY_CONFORMANCE_SUITE/conformance`: The official conformance test suite
 
+## Key Makefile.toml Tasks
+
+The project uses `cargo-make` for task orchestration. These are the key tasks relevant to the development loop:
+
+| Task | Command | Description |
+|------|---------|-------------|
+| `deploy` | `cargo make deploy` | Deploy the gateway controller to the cluster using `kubectl apply -k deploy/` |
+| `gateway-api-install` | `cargo make gateway-api-install` | Install Gateway API CRDs into the cluster |
+| `test` | `cargo make test` | Run unit tests with cargo-nextest |
+| `dev-test-flow` | `cargo make dev-test-flow` | Run all checks (format, lint, build, test) |
+
+**Important**: Always use the exact task names listed above. Do not guess or invent task names. If you need to find other tasks, run `cargo make --list-all-steps`.
+
 ## Cluster Lifecycle
 
 - **Cluster Setup** (`cluster-up.sh`): Run at the start of a development session. Creates the DigitalOcean Kubernetes cluster if it doesn't exist, or clears the namespace if it does. Ensures kubectl context is properly configured.

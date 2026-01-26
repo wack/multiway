@@ -388,12 +388,46 @@ create_fresh_namespace() {
 }
 
 #######################################
-# Installs or updates the Gateway API CRDs in the cluster.
+# Checks if Gateway API CRDs are already installed in the cluster.
+# Returns 0 if all required CRDs exist, 1 otherwise.
+#######################################
+gateway_api_crds_exist() {
+    local -ra required_crds=(
+        "gatewayclasses.gateway.networking.k8s.io"
+        "gateways.gateway.networking.k8s.io"
+        "httproutes.gateway.networking.k8s.io"
+    )
+
+    for crd in "${required_crds[@]}"; do
+        if ! kubectl get crd "${crd}" &>/dev/null; then
+            return 1
+        fi
+    done
+
+    return 0
+}
+
+#######################################
+# Installs Gateway API CRDs in the cluster if they don't already exist.
 # CRDs (Custom Resource Definitions) must be installed before deploying
-# resources that use them. This is idempotent - running it multiple times
-# is safe and will update CRDs if the definitions have changed.
+# resources that use them. Skips installation if CRDs are already present
+# to avoid conflicts with pre-installed CRDs (e.g., from managed Kubernetes).
 #######################################
 install_gateway_api_crds() {
+    info "Checking for Gateway API CRDs..."
+
+    if [[ "${DRY_RUN}" == true ]]; then
+        echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} kubectl get crd gatewayclasses.gateway.networking.k8s.io"
+        echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} cargo make gateway-api-install (if CRDs missing)"
+        success "CRD check skipped (dry-run mode)"
+        return 0
+    fi
+
+    if gateway_api_crds_exist; then
+        success "Gateway API CRDs already installed, skipping"
+        return 0
+    fi
+
     info "Installing Gateway API CRDs..."
 
     if ! run_cmd cargo make gateway-api-install; then

@@ -25,7 +25,7 @@ spec:
           imagePullPolicy: IfNotPresent
           args:
             - controller
-            - --dataplane-image=multiway-dataplane:latest
+            - --dataplane-image=ghcr.io/wack/multiway-dataplane:latest
             - --log-level=info
           ports:
             - name: metrics
