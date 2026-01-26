@@ -7,6 +7,44 @@ You are responsible for running the Gateway API conformance test suite for the m
 
 **Prerequisite**: A Kubernetes cluster must be running before using this skill. Use the `development-loop` skill's `cluster-up.sh` script to provision a DigitalOcean cluster if needed.
 
+# Before You Begin: Replace Cilium Gateway API CRDs
+
+DigitalOcean Kubernetes clusters come with Cilium pre-installed, which includes its own Gateway API CRDs. These CRDs must be replaced with the project's CRDs before running conformance tests.
+
+**IMPORTANT**: Before running any conformance tests, you MUST create a task to track the CRD replacement:
+
+Use the `TaskCreate` tool to create a task with:
+- **subject**: "Replace Cilium Gateway API CRDs with project CRDs"
+- **description**: "Remove the Gateway API CRDs installed by Cilium and install the project's CRDs instead. This is required because DigitalOcean clusters come with Cilium's Gateway API CRDs which are incompatible with conformance testing."
+- **activeForm**: "Replacing Gateway API CRDs"
+
+Then execute the following commands to complete the task:
+
+1. **Delete the existing Gateway API CRDs** (installed by Cilium):
+   ```bash
+   kubectl delete crd gatewayclasses.gateway.networking.k8s.io --ignore-not-found
+   kubectl delete crd gateways.gateway.networking.k8s.io --ignore-not-found
+   kubectl delete crd httproutes.gateway.networking.k8s.io --ignore-not-found
+   kubectl delete crd referencegrants.gateway.networking.k8s.io --ignore-not-found
+   kubectl delete crd grpcroutes.gateway.networking.k8s.io --ignore-not-found
+   kubectl delete crd tcproutes.gateway.networking.k8s.io --ignore-not-found
+   kubectl delete crd tlsroutes.gateway.networking.k8s.io --ignore-not-found
+   kubectl delete crd udproutes.gateway.networking.k8s.io --ignore-not-found
+   kubectl delete crd backendtlspolicies.gateway.networking.k8s.io --ignore-not-found
+   ```
+
+2. **Install the project's Gateway API CRDs**:
+   ```bash
+   cargo make gateway-api-install
+   ```
+
+3. **Verify the CRDs are installed**:
+   ```bash
+   kubectl get crd | grep gateway.networking.k8s.io
+   ```
+
+Mark the task as completed before proceeding with the conformance tests.
+
 # Running Conformance Tests
 
 Use the automated script located at `.claude/skills/conformance/run-conformance.sh` to run the conformance tests.

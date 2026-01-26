@@ -106,8 +106,13 @@ pub struct GatewayRef {
 pub struct ListenerConfig {
     /// Name of the listener (from Gateway spec)
     pub name: String,
-    /// Port to listen on
+    /// Port to listen on (the external port exposed by the Service)
     pub port: u16,
+    /// Port the container binds to internally.
+    /// For privileged ports (< 1024), this is offset by 8000 to avoid requiring root.
+    /// The Service maps the external `port` to this internal `container_port`.
+    #[serde(default)]
+    pub container_port: u16,
     /// Protocol (HTTP or HTTPS)
     pub protocol: Protocol,
     /// Hostname to match (optional, None means all hosts)
@@ -118,12 +123,28 @@ pub struct ListenerConfig {
     pub tls: Option<TlsConfig>,
 }
 
+/// Offset added to privileged ports to compute the container port.
+/// Ports below 1024 require root privileges to bind, so we add this offset
+/// to allow the data plane to run as non-root.
+const PRIVILEGED_PORT_OFFSET: u16 = 8000;
+
+/// Compute the internal container port from an external listener port.
+/// Privileged ports (< 1024) are offset by 8000 to avoid requiring root.
+pub fn compute_container_port(port: u16) -> u16 {
+    if port < 1024 {
+        port + PRIVILEGED_PORT_OFFSET
+    } else {
+        port
+    }
+}
+
 impl ListenerConfig {
     /// Create a new HTTP listener configuration
     pub fn http(name: impl Into<String>, port: u16, hostname: Option<String>) -> Self {
         Self {
             name: name.into(),
             port,
+            container_port: compute_container_port(port),
             protocol: Protocol::Http,
             hostname,
             tls: None,
@@ -140,6 +161,7 @@ impl ListenerConfig {
         Self {
             name: name.into(),
             port,
+            container_port: compute_container_port(port),
             protocol: Protocol::Https,
             hostname,
             tls: Some(tls),

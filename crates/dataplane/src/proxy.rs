@@ -38,10 +38,17 @@ impl GatewayProxy {
 
         // Create HTTP proxy service for each listener
         for listener in &config.listeners {
-            let addr = format!("0.0.0.0:{}", listener.port);
+            // Use container_port for binding. If not set (0), fall back to port for backwards compat.
+            let bind_port = if listener.container_port > 0 {
+                listener.container_port
+            } else {
+                listener.port
+            };
+            let addr = format!("0.0.0.0:{}", bind_port);
             info!(
                 listener = %listener.name,
                 port = listener.port,
+                bind_port = bind_port,
                 protocol = ?listener.protocol,
                 "Starting listener"
             );

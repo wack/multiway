@@ -356,9 +356,11 @@ fn build_gateway_config(
     // Add listeners
     for listener in &gateway.spec.listeners {
         let protocol = listener.protocol.parse().unwrap_or(Protocol::Http);
+        let port = listener.port as u16;
         let listener_config = ListenerConfig {
             name: listener.name.clone(),
-            port: listener.port as u16,
+            port,
+            container_port: crate::controller::config::compute_container_port(port),
             protocol,
             hostname: listener.hostname.clone(),
             tls: None, // TODO: Handle TLS configuration
@@ -504,14 +506,20 @@ fn sanitize_port_name(name: &str) -> String {
 fn build_service(names: &DataPlaneNames, gateway: &Gateway) -> Service {
     // Deduplicate ports: multiple Gateway listeners can share the same port
     // (e.g., for SNI-based routing), but Kubernetes Services require unique ports.
+    //
+    // The Service maps external listener ports to internal container ports.
+    // For privileged ports (< 1024), the container binds to port + 8000 to avoid
+    // requiring root privileges.
     let mut port_map: BTreeMap<i32, ServicePort> = BTreeMap::new();
     for listener in &gateway.spec.listeners {
+        let container_port =
+            crate::controller::config::compute_container_port(listener.port as u16) as i32;
         port_map
             .entry(listener.port)
             .or_insert_with(|| ServicePort {
                 name: Some(sanitize_port_name(&listener.name)),
                 port: listener.port,
-                target_port: Some(IntOrString::Int(listener.port)),
+                target_port: Some(IntOrString::Int(container_port)),
                 protocol: Some("TCP".to_string()),
                 ..Default::default()
             });
@@ -545,19 +553,18 @@ fn build_deployment(
     // Deduplicate ports: multiple Gateway listeners can share the same port
     // (e.g., for SNI-based routing), but Kubernetes rejects duplicate container ports.
     //
-    // We use hostPort to make the container port directly accessible on the node.
-    // This is required for Kind clusters with extraPortMappings to route external
-    // traffic to the data plane. Note: Only one Gateway per port can be active on
-    // a single-node cluster. For full multi-Gateway support, use MetalLB or a
-    // multi-node cluster.
+    // The container binds to an internal port (container_port) which may differ from
+    // the external listener port. For privileged ports (< 1024), we add an offset
+    // to avoid requiring root privileges. The Service maps external port → container_port.
     let mut port_map: BTreeMap<i32, ContainerPort> = BTreeMap::new();
     for listener in &gateway.spec.listeners {
+        let internal_port =
+            crate::controller::config::compute_container_port(listener.port as u16) as i32;
         port_map
-            .entry(listener.port)
+            .entry(internal_port)
             .or_insert_with(|| ContainerPort {
                 name: Some(sanitize_port_name(&listener.name)),
-                container_port: listener.port,
-                host_port: Some(listener.port),
+                container_port: internal_port,
                 protocol: Some("TCP".to_string()),
                 ..Default::default()
             });
@@ -1243,22 +1250,27 @@ mod tests {
         let config = default_config();
         let deployment = build_deployment(&names, &gateway, &config);
 
-        // The Deployment should have only ONE container port entry for port 443,
-        // not two (which would be rejected by Kubernetes with:
-        // "duplicate entries for key [containerPort=443,protocol="TCP"]")
+        // The Deployment should have only ONE container port entry for port 8443
+        // (the internal container port for listener port 443, which is < 1024 so gets +8000 offset).
+        // Not two (which would be rejected by Kubernetes with:
+        // "duplicate entries for key [containerPort=8443,protocol="TCP"]")
         let containers = deployment.spec.unwrap().template.spec.unwrap().containers;
         let ports = containers[0].ports.as_ref().unwrap();
 
-        // Count container ports by port number
-        let port_443_count = ports.iter().filter(|p| p.container_port == 443).count();
+        // Count container ports by port number (443 + 8000 = 8443)
+        let container_port = crate::controller::config::compute_container_port(443);
+        let port_8443_count = ports
+            .iter()
+            .filter(|p| p.container_port == container_port as i32)
+            .count();
 
         assert_eq!(
-            port_443_count, 1,
-            "Expected exactly 1 ContainerPort for port 443, but found {}. \
+            port_8443_count, 1,
+            "Expected exactly 1 ContainerPort for port {} (internal port for listener 443), but found {}. \
              Multiple Gateway listeners can share the same port, but the \
              generated Deployment must deduplicate container ports to avoid \
              Kubernetes API rejection.",
-            port_443_count
+            container_port, port_8443_count
         );
 
         // Verify all container ports are unique

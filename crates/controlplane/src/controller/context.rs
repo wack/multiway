@@ -62,7 +62,7 @@ impl Default for ControllerConfig {
     fn default() -> Self {
         Self {
             dataplane_image: "ghcr.io/wack/multiway-dataplane:latest".to_string(),
-            image_pull_policy: "IfNotPresent".to_string(),
+            image_pull_policy: "Always".to_string(),
             default_replicas: 1,
             resource_requests: ResourceConfig {
                 cpu: "100m".to_string(),

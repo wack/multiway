@@ -645,6 +645,7 @@ mod tests {
             listeners: vec![crate::config::ListenerConfig {
                 name: "http".to_string(),
                 port: 80,
+                container_port: 8080,
                 protocol: crate::config::Protocol::Http,
                 hostname: None,
                 tls: None,
@@ -1485,6 +1486,7 @@ mod tests {
         config.listeners.push(crate::config::ListenerConfig {
             name: "https".to_string(),
             port: 443,
+            container_port: 8443,
             protocol: crate::config::Protocol::Https,
             hostname: None,
             tls: None,

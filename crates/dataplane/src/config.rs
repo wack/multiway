@@ -34,8 +34,13 @@ pub struct GatewayRef {
 pub struct ListenerConfig {
     /// Name of the listener
     pub name: String,
-    /// Port to listen on
+    /// Port to listen on (the external port exposed by the Service)
     pub port: u16,
+    /// Port the container binds to internally.
+    /// For privileged ports (< 1024), this is offset by 8000 to avoid requiring root.
+    /// If not specified, defaults to `port` (for backwards compatibility).
+    #[serde(default)]
+    pub container_port: u16,
     /// Protocol (HTTP or HTTPS)
     pub protocol: Protocol,
     /// Hostname to match (optional)
