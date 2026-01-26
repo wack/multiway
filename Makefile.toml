@@ -5,7 +5,7 @@ default_to_workspace = false
 CARGO_MAKE_CLIPPY_ARGS = "-- --no-deps"
 CARGO_MAKE_COVERAGE_PROVIDER = "llvm-cov"
 CARGO_MAKE_CARGO_BUILD_TEST_FLAGS = ""
-GATEWAY_API_VERSION = "1.4.1"
+GATEWAY_API_VERSION = "1.2.1"
 # This is the directory where we generate the CLI's reference
 # documentation.
 CLI_REFERENCE_DIR = "target/debug/"
@@ -280,7 +280,7 @@ category = "Development"
 script_runner = "bash"
 script = '''
 gen_crd() { kopium --filename .crds/v${GATEWAY_API_VERSION}/${1}.yml | rustfmt > crates/gateway-crds/src/${1//-/_}.rs; }
-gen_crd backend-tls-policies
+# gen_crd backend-tls-policies  # Not available in v1.2.1
 gen_crd gateway
 gen_crd gateway-class
 gen_crd grpc
