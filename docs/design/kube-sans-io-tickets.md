@@ -7,6 +7,25 @@
 >
 > **Project:** Helm Support
 
+## Dependency Graph
+
+```
+Sub-issue 1: Create kube-sans-io crate (Phase 1)
+    │
+    ▼
+Sub-issue 2: Adapt controlplane imports (Phase 2)
+    │         [blocked by Phase 1]
+    ▼
+Sub-issue 3: Executor trait + dyn dispatch (Phase 3)
+    │         [blocked by Phase 2]
+    ▼
+Sub-issue 4: Test fakes + docs (Phase 4)
+              [blocked by Phase 3]
+```
+
+All sub-issues are strictly sequential — each phase depends on the previous
+one. The parent issue is complete when all four sub-issues are done.
+
 ---
 
 ## Parent Issue
@@ -47,6 +66,8 @@ Design doc: `docs/design/sans-io-crate-extraction.md`
 
 **Title:** Create `kube-sans-io` crate with generic `ReconcileResult`, `Snapshot` trait, and store types
 
+**Blocked by:** (none — this is the first phase)
+
 **Description:**
 
 Initialize the new crate and implement the generic types that form the
@@ -84,6 +105,8 @@ Estimated effort: ~200 new lines.
 ## Sub-issue 2: Adapt controlplane to import `kube-sans-io` generic types (Phase 2)
 
 **Title:** Replace controlplane's `ReconcileResult` internals with `kube-sans-io` generic types
+
+**Blocked by:** Sub-issue 1 (Phase 1 — crate must exist before controlplane can depend on it)
 
 **Description:**
 
@@ -132,6 +155,8 @@ Estimated effort: ~50 new lines, ~100 changed lines.
 
 **Title:** Implement `Executor` trait, inject `Box<dyn Executor>` into `ControllerContext`
 
+**Blocked by:** Sub-issue 2 (Phase 2 — controlplane must already use `kube-sans-io` types so the `Executor` trait can reference them)
+
 **Description:**
 
 Define the `kube_sans_io::Executor` trait (using `#[async_trait]` for dyn
@@ -170,6 +195,8 @@ Estimated effort: ~200 new lines, ~80 changed lines.
 ## Sub-issue 4: Built-in test fakes, documentation, and crate tests (Phase 4)
 
 **Title:** Add `RecordingExecutor`, `FailingExecutor`, doc examples, and comprehensive tests
+
+**Blocked by:** Sub-issue 3 (Phase 3 — `Executor` trait must exist before test fakes can implement it)
 
 **Description:**
 
