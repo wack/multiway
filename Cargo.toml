@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/controlplane", "crates/dataplane", "crates/gateway-crds"]
+members = ["crates/controlplane", "crates/dataplane", "crates/gateway-crds", "crates/proxy-core"]
 resolver = "3"
 
 [workspace.dependencies]
@@ -17,3 +17,15 @@ thiserror = "2.0"
 tokio = { version = "1.48", features = ["full"] }
 tracing = { version = "0.1", features = ["attributes"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+monoio = { version = "0.2.4", features = ["sync", "macros", "utils", "signal"] }
+monoio-http = "0.3.12"
+monoio-transports = "0.5.3"
+monoio-rustls = "0.4.0"
+service-async = "0.2.4"
+http = "1.0"
+arc-swap = "1.7"
+regex = "1.0"
+rand = "0.9"
+bytes = "1"
+rustls = { version = "0.23", default-features = false, features = ["std"] }
+rustls-pemfile = "2"

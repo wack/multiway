@@ -1,7 +1,7 @@
 //! Multiway Gateway Data Plane
 //!
 //! This is the data plane component of the Multiway Gateway API implementation.
-//! It uses CloudFlare's Pingora library to provide high-performance HTTP proxying.
+//! It uses proxy-core's ProxyServer to provide high-performance HTTP proxying.
 //!
 //! # Architecture
 //!
@@ -17,12 +17,10 @@
 //! - Routes: HTTP routing rules with matches, filters, and backends
 
 mod config;
-mod proxy;
-mod router;
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
-use anyhow::{Context, Result};
 use arc_swap::ArcSwap;
 use clap::Parser;
 use futures::StreamExt;
@@ -32,7 +30,7 @@ use tracing::{debug, error, info, warn};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 use config::GatewayConfig;
-use proxy::GatewayProxy;
+use proxy_core::server::ProxyServer;
 
 /// ConfigMap key for the gateway configuration (matches control plane)
 const CONFIG_KEY: &str = "config.json";
@@ -40,7 +38,7 @@ const CONFIG_KEY: &str = "config.json";
 /// Multiway Gateway Data Plane
 #[derive(Parser, Debug)]
 #[command(name = "multiway-dataplane")]
-#[command(about = "Pingora-based HTTP proxy for Kubernetes Gateway API")]
+#[command(about = "HTTP proxy for Kubernetes Gateway API")]
 struct Args {
     /// Gateway name (required for ConfigMap naming)
     #[arg(long, env = "GATEWAY_NAME")]
@@ -59,7 +57,7 @@ struct Args {
     log_json: bool,
 }
 
-fn main() -> Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     // Initialize logging
@@ -77,8 +75,7 @@ fn main() -> Result<()> {
     // Create tokio runtime for K8s client
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .build()
-        .context("Failed to create tokio runtime")?;
+        .build()?;
 
     // Load initial configuration from Kubernetes ConfigMap
     let config = rt.block_on(load_config_from_k8s(
@@ -105,14 +102,24 @@ fn main() -> Result<()> {
         });
     });
 
-    // Create and run the proxy
-    let proxy = GatewayProxy::new(config_state);
-    proxy.run()?;
+    // Create shutdown flag for the proxy.
+    //
+    // Graceful shutdown: In a container environment, SIGTERM causes the
+    // process to exit. For explicit signal handling (setting the shutdown
+    // flag so workers drain in-flight connections), a dedicated signal
+    // crate (e.g. ctrlc or tokio::signal) could be added in the future.
+    let shutdown = Arc::new(AtomicBool::new(false));
+
+    // Build and run proxy-core's ProxyServer.
+    // This blocks until the shutdown flag is set to true.
+    let server = ProxyServer::builder().config(config_state).build()?;
+
+    server.run(shutdown)?;
 
     Ok(())
 }
 
-fn init_logging(level: &str, json: bool) -> Result<()> {
+fn init_logging(level: &str, json: bool) -> Result<(), Box<dyn std::error::Error>> {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
 
     if json {
@@ -131,31 +138,36 @@ fn init_logging(level: &str, json: bool) -> Result<()> {
 }
 
 /// Load configuration from a Kubernetes ConfigMap via the API
-async fn load_config_from_k8s(namespace: &str, configmap_name: &str) -> Result<GatewayConfig> {
+async fn load_config_from_k8s(
+    namespace: &str,
+    configmap_name: &str,
+) -> Result<GatewayConfig, Box<dyn std::error::Error>> {
     let client = Client::try_default()
         .await
-        .context("Failed to create Kubernetes client")?;
+        .map_err(|e| format!("Failed to create Kubernetes client: {e}"))?;
 
     let configmaps: Api<ConfigMap> = Api::namespaced(client, namespace);
 
     let cm = configmaps
         .get(configmap_name)
         .await
-        .with_context(|| format!("Failed to get ConfigMap {}/{}", namespace, configmap_name))?;
+        .map_err(|e| format!("Failed to get ConfigMap {namespace}/{configmap_name}: {e}"))?;
 
     parse_config_from_configmap(&cm)
 }
 
 /// Parse GatewayConfig from a ConfigMap
-fn parse_config_from_configmap(cm: &ConfigMap) -> Result<GatewayConfig> {
-    let data = cm.data.as_ref().context("ConfigMap has no data")?;
+fn parse_config_from_configmap(
+    cm: &ConfigMap,
+) -> Result<GatewayConfig, Box<dyn std::error::Error>> {
+    let data = cm.data.as_ref().ok_or("ConfigMap has no data")?;
 
     let content = data
         .get(CONFIG_KEY)
-        .with_context(|| format!("ConfigMap missing '{}' key", CONFIG_KEY))?;
+        .ok_or_else(|| format!("ConfigMap missing '{CONFIG_KEY}' key"))?;
 
-    let config: GatewayConfig =
-        serde_json::from_str(content).context("Failed to parse config JSON from ConfigMap")?;
+    let config: GatewayConfig = serde_json::from_str(content)
+        .map_err(|e| format!("Failed to parse config JSON from ConfigMap: {e}"))?;
 
     Ok(config)
 }
@@ -165,16 +177,16 @@ async fn watch_configmap(
     namespace: &str,
     configmap_name: &str,
     state: Arc<ArcSwap<GatewayConfig>>,
-) -> Result<()> {
+) -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::try_default()
         .await
-        .context("Failed to create Kubernetes client for watcher")?;
+        .map_err(|e| format!("Failed to create Kubernetes client for watcher: {e}"))?;
 
     let configmaps: Api<ConfigMap> = Api::namespaced(client, namespace);
 
     // Use field selector to watch only our specific ConfigMap
     let watcher_config =
-        watcher::Config::default().fields(&format!("metadata.name={}", configmap_name));
+        watcher::Config::default().fields(&format!("metadata.name={configmap_name}"));
 
     info!(
         namespace = %namespace,
