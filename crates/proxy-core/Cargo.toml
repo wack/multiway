@@ -1,0 +1,53 @@
+[package]
+name = "proxy-core"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Core runtime — monoio thread-per-core async runtime with io_uring/epoll FusionDriver
+monoio.workspace = true
+
+# HTTP codecs — ServerCodec/ClientCodec for monoio
+monoio-http.workspace = true
+
+# Transport & pooling — TcpConnector, PooledConnector, ConnectionPool, Poolable
+monoio-transports.workspace = true
+
+# TLS — server-side TLS termination via rustls
+monoio-rustls.workspace = true
+
+# Middleware composition — Service, MakeService, FactoryLayer, FactoryStack
+service-async.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# HTTP types
+http.workspace = true
+
+# Route matching
+regex.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Atomic config swap for hot-reload
+arc-swap.workspace = true
+
+# Randomness (e.g. load balancing, jitter)
+rand.workspace = true
+
+# Byte buffers (used by monoio-http payloads)
+bytes.workspace = true
+
+# TLS certificate/key parsing
+rustls.workspace = true
+rustls-pemfile.workspace = true
+
+[dev-dependencies]
+# Self-signed certificate generation for TLS tests
+rcgen = "0.13"
