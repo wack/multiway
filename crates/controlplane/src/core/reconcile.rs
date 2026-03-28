@@ -109,9 +109,9 @@ fn build_gateway_class_status(
         message: message.to_string(),
     };
 
-    // Note: supported_features field not available in Gateway API v1.2.1
     GatewayClassStatus {
         conditions: Some(vec![condition]),
+        supported_features: None,
     }
 }
 
@@ -747,7 +747,7 @@ fn build_parent_status(
             port: parent_ref.port,
             section_name: parent_ref.section_name.clone(),
         },
-        conditions: Some(vec![
+        conditions: vec![
             Condition {
                 type_: "Accepted".to_string(),
                 status: status_value.to_string(),
@@ -764,7 +764,7 @@ fn build_parent_status(
                 reason: if accepted { "ResolvedRefs" } else { reason }.to_string(),
                 message: message.to_string(),
             },
-        ]),
+        ],
     }
 }
 
@@ -817,6 +817,7 @@ mod tests {
                     reason: "Accepted".to_string(),
                     message: "Accepted".to_string(),
                 }]),
+                supported_features: None,
             }),
         }
     }
@@ -1086,8 +1087,6 @@ mod tests {
 
         let accepted = status.parents[0]
             .conditions
-            .as_ref()
-            .unwrap()
             .iter()
             .find(|c| c.type_ == "Accepted")
             .unwrap();
@@ -1118,8 +1117,6 @@ mod tests {
 
         let accepted = status.parents[0]
             .conditions
-            .as_ref()
-            .unwrap()
             .iter()
             .find(|c| c.type_ == "Accepted")
             .unwrap();

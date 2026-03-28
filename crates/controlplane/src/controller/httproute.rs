@@ -890,7 +890,6 @@ mod tests {
     /// Spec: Rule with no matches should match all requests
     #[test]
     fn test_convert_rule_no_matches() {
-        // Note: name field not available in Gateway API v1.2.1
         let rule = HttpRouteRules {
             matches: None,
             filters: None,
@@ -903,11 +902,11 @@ mod tests {
                 weight: None,
                 filters: None,
             }]),
+            name: None,
             timeouts: None,
         };
 
         let result = convert_rule(&rule, "default").unwrap();
-        // Note: name field not available in Gateway API v1.2.1
         assert_eq!(result.name, None);
         // Should have a default match
         assert_eq!(result.matches.len(), 1);
@@ -917,7 +916,6 @@ mod tests {
     /// Spec: Rule with timeouts
     #[test]
     fn test_convert_rule_with_timeouts() {
-        // Note: name field not available in Gateway API v1.2.1
         let rule = HttpRouteRules {
             matches: None,
             filters: None,
@@ -930,6 +928,7 @@ mod tests {
                 weight: None,
                 filters: None,
             }]),
+            name: None,
             timeouts: Some(HttpRouteRulesTimeouts {
                 request: Some("30s".to_string()),
                 backend_request: Some("10s".to_string()),
