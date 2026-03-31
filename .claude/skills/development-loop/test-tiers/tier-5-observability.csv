@@ -1,5 +1,0 @@
-test_name,description,implemented
-HTTPRouteObservedGenerationBump,Route status condition tracking for configuration change detection.,false
-GatewayObservedGenerationBump,Gateway status generation tracking for state synchronization.,false
-GatewayClassObservedGenerationBump,GatewayClass status tracking for control plane consistency verification.,false
-GatewayInfrastructure,Infrastructure metadata propagation to provisioned resources.,false
