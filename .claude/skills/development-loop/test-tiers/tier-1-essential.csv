@@ -1,8 +1,0 @@
-test_name,description,implemented
-HTTPRouteSimpleSameNamespace,Basic HTTP routing from a route to a backend service in the same namespace. Foundation of all routing.,true
-HTTPRouteMatching,Path and header matching for routing requests to different backends based on request criteria.,false
-HTTPRouteExactPathMatching,Exact path matching where /foo matches only /foo and not /foo/bar.,false
-HTTPRouteWeight,Traffic distribution across multiple backends based on specified weights for load balancing.,false
-GatewayWithAttachedRoutes,Core Gateway-Route attachment model verifying routes attach correctly and status is tracked.,false
-HTTPRouteListenerHostnameMatching,Multiple listeners with different hostnames routing to different backends.,false
-HTTPRouteListenerPortMatching,HTTP listeners on different ports with port-based routing.,false

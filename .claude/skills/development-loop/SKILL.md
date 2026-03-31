@@ -1,6 +1,6 @@
 ---
 name: development-loop
-description: Red-green-refactor development loop for implementing Gateway API conformance tests. Use this skill when working on implementing new conformance tests for the multiway project. It guides the agent through selecting the next test to implement based on priority tiers, running the conformance suite, diagnosing failures, and implementing fixes.
+description: Red-green-refactor development loop for implementing Gateway API conformance tests. Use this skill when working on implementing new conformance tests for the multiway project. It guides the agent through selecting the next unblocked Linear ticket, creating a Graphite-tracked branch, running the conformance suite in an isolated Kubernetes namespace, diagnosing failures, and implementing fixes.
 ---
 
 # Development Loop for Gateway API Conformance Implementation
@@ -9,127 +9,158 @@ You are an expert in implementing Kubernetes Gateway API conformance tests. You 
 
 ## Overview
 
-This skill guides you through a development loop for implementing conformance tests one at a time. Each iteration of the loop:
-1. Selects the highest-priority unimplemented test
-2. Verifies the test is currently skipped
-3. Enables the test and observes the failure
-4. Diagnoses the root cause
-5. Implements and verifies the fix
-6. Documents the results
+This skill guides you through a development loop for implementing conformance tests one ticket at a time. Each iteration:
 
-**CRITICAL**: All conformance tests MUST be run **locally** using the `gateway-conformance-runner` skill's local testing workflow. Never run tests in-cluster during development.
+1. Selects the next unblocked ticket from Linear
+2. Creates a Graphite-tracked branch so Linear auto-transitions the ticket
+3. Sets up an isolated namespace on the shared conformance cluster
+4. Runs conformance tests and observes failures
+5. Diagnoses root causes and implements fixes
+6. Tears down the namespace and submits the PR
 
-## Test Priority Tiers
+## Prerequisites
 
-Test cases have been prioritized into 7 tiers, stored in CSV files within this skill's directory:
-
-| File | Priority | Description |
-|------|----------|-------------|
-| `test-tiers/tier-1-essential.csv` | Highest | Core functionality that must work |
-| `test-tiers/tier-2-important-http.csv` | High | Important HTTP routing features |
-| `test-tiers/tier-3-production.csv` | Medium-High | Production-ready features |
-| `test-tiers/tier-4-advanced.csv` | Medium | Advanced routing capabilities |
-| `test-tiers/tier-5-observability.csv` | Medium-Low | Observability features |
-| `test-tiers/tier-6-validation.csv` | Low | Validation and edge cases |
-| `test-tiers/tier-7-not-relevant.csv` | Lowest | Tests not relevant to this implementation |
-
-Each CSV file has the following columns:
-- `test_name`: The name of the conformance test
-- `description`: A brief description of what the test validates
-- `implemented`: Status - `false`, `in-progress`, or `true`
+- **Linear MCP**: The Linear MCP tools must be available for querying tickets and checking dependencies
+- **Graphite CLI (`gt`)**: Must be installed for branch creation and PR stacking
+- **Shared cluster**: The `mw-conformance` DigitalOcean Kubernetes cluster is used for all conformance runs. If it doesn't exist yet, `cluster-up.sh` will create it automatically via `cargo make do-create`.
+- **Environment variables** (configured in `.envrc.local`):
+  - `GATEWAY_CONFORMANCE_SUITE` — path to the Gateway API repository clone
+  - `DOCKER_REGISTRY` — container registry URL (e.g., `ghcr.io/wack`)
 
 ## Development Loop Steps
 
-### Step 1: Select the Next Test
+### Step 1: Select the Next Ticket from Linear
 
-Use the `pick-next.sh` helper script to select and enable the next test:
+Query Linear for the next ticket to work on:
 
-```bash
-# See what test is next without enabling it
-./pick-next.sh --show-next
+1. Use the Linear MCP `list_issues` tool to fetch issues in the **"MultiWay: API Gateway"** project with state **"Todo"**
+2. For each candidate ticket, use `get_issue` with `includeRelations: true` to check its dependency graph
+3. **Skip any ticket whose blockers are still open** — examine the `blockedBy` relations and reject tickets where any blocking issue has a status other than "Done" or "Canceled"
+4. Select the first unblocked ticket (prefer lower issue numbers, as they represent foundational work that later tickets build upon)
 
-# Enable the next test (removes t.Skip() and marks as in-progress)
-./pick-next.sh
-```
-
-The script will:
-1. Scan tier CSV files in priority order (tier-1 first, tier-7 last)
-2. Find the first test where `implemented` is `false` or `in-progress`
-3. If `false`, enable the test by removing `t.Skip()` from the conformance suite
-4. Update the CSV status to `in-progress`
-
-**IMPORTANT**: After running `pick-next.sh`, you MUST inform the user which test was selected by clearly stating:
-- The **test name** (e.g., `HTTPRouteSimpleSameNamespace`)
-- The **test description** (e.g., "Basic HTTP routing from a route to a backend service in the same namespace")
-
-This ensures the user understands what functionality is being implemented in this iteration.
+**IMPORTANT**: After selecting a ticket, clearly inform the user:
+- The **ticket ID** (e.g., `MULTI-1101`)
+- The **ticket title** (e.g., "Tier 1 — Core routing conformance (7 tests)")
+- A brief summary of what the ticket covers
 
 **Example output to user:**
-> The next test to implement is **HTTPRouteSimpleSameNamespace**: Basic HTTP routing from a route to a backend service in the same namespace. This is the foundation of all routing functionality.
+> The next ticket to work on is **MULTI-1101**: Tier 1 — Core routing conformance (7 tests). This covers the 7 most essential conformance tests including basic routing, path matching, weighted backends, and listener hostname matching.
 
-### Step 2: Verify Test is Currently Skipped
+If no unblocked "Todo" tickets exist, inform the user and stop.
 
-Before making any code changes, verify the current state:
+### Step 2: Create a Branch and Start Work
 
-1. Ensure the `GATEWAY_CONFORMANCE_SUITE` environment variable is set
-2. Navigate to `$GATEWAY_CONFORMANCE_SUITE`
-3. Use the `gateway-conformance-runner` skill to run the conformance suite locally
-4. Verify:
-   - The selected test is currently **skipped** (not running)
-   - All other enabled tests are **passing**
+Every Linear issue has a `gitBranchName` field (e.g., `robbie/multi-1101`). Use this for the branch name so that Linear's GitHub integration can automatically track the ticket's lifecycle.
 
-If other tests are failing, stop and address those failures first before enabling a new test.
+1. **Create the branch with Graphite** so PRs can be stacked:
+   ```bash
+   gt create <gitBranchName>
+   ```
+   This creates a new branch tracked by Graphite, branched from the current stack.
 
-### Step 3: Enable the Test and Observe Failure
+2. **Push the branch to the remote** so Linear detects it and auto-transitions the ticket to "In Progress":
+   ```bash
+   git push -u origin <gitBranchName>
+   ```
 
-1. Enable the test by removing it from the skip list or adding it to the enabled tests in the conformance configuration
-2. Run the conformance suite again using `gateway-conformance-runner`
-3. Observe and capture the test failure output
-4. Document the specific failure message and any relevant stack traces
+3. **Confirm the transition in Linear** — as a safety net, also update the ticket status via the Linear MCP:
+   ```
+   save_issue(id: "MULTI-XXXX", state: "In Progress")
+   ```
 
-### Step 4: Handle Test Results
+### Step 3: Set Up the Conformance Namespace
 
-**If the test passes immediately:**
-- Update the CSV file to change `implemented` from `in-progress` to `true`
-- Document this finding (the feature was already implemented)
-- Return to Step 1 to select the next test
+The project uses a single shared cluster (`mw-conformance`) instead of spinning up a new cluster for each ticket. Each ticket gets its own namespace for isolation, so multiple agents can run conformance suites in parallel without conflicting.
 
-**If the test fails:**
-- Proceed to Step 5 (Diagnosis)
+The namespace name is the **lowercased ticket ID** (e.g., `multi-1101`). Kubernetes namespaces must be lowercase.
 
-### Step 5: Diagnose the Failure
+1. **Switch to the conformance cluster context**:
+   ```bash
+   doctl kubernetes cluster kubeconfig save mw-conformance
+   ```
 
-#### 5a: Attempt to Create a Unit Test (Recommended)
+2. **Verify the cluster is accessible**:
+   ```bash
+   kubectl get nodes
+   ```
+   If this fails, the cluster may not exist yet. The `cluster-up.sh` script handles this automatically — it will create the cluster if it's missing.
 
-Before diving into the implementation, try to recreate the conformance test as a purely functional unit test within this repository:
+3. **Create a namespace for this ticket**:
+   ```bash
+   kubectl create namespace <ticket-id-lowercase>
+   ```
+   If the namespace already exists (e.g., from a previous attempt), delete it first to ensure a clean slate:
+   ```bash
+   kubectl delete namespace <ticket-id-lowercase> --wait=true --ignore-not-found
+   kubectl create namespace <ticket-id-lowercase>
+   ```
+
+4. **Install/update Gateway API CRDs** (idempotent, safe to run every time):
+   ```bash
+   cargo make gateway-api-install
+   ```
+
+### Step 4: Build, Deploy, and Run Conformance Tests
+
+Use the `gateway-conformance-runner` skill's `run-conformance.sh` script. It accepts `--namespace` to target your ticket's namespace and `--cluster-name` to specify the shared cluster.
+
+**First run** (builds images, deploys, and runs tests):
+```bash
+.claude/skills/gateway-conformance-runner/run-conformance.sh \
+  --cluster-name mw-conformance \
+  --namespace <ticket-id-lowercase>
+```
+
+**Subsequent runs** (skip the build if code hasn't changed):
+```bash
+.claude/skills/gateway-conformance-runner/run-conformance.sh \
+  --cluster-name mw-conformance \
+  --namespace <ticket-id-lowercase> \
+  --skip-build
+```
+
+**Test-only re-runs** (controller is already deployed):
+```bash
+.claude/skills/gateway-conformance-runner/run-conformance.sh \
+  --cluster-name mw-conformance \
+  --namespace <ticket-id-lowercase> \
+  --skip-build --skip-deploy
+```
+
+### Step 5: Handle Test Results
+
+**If the target tests pass immediately:**
+- The feature was already implemented — document this finding
+- Proceed to Step 8 (Clean Up and Report)
+
+**If tests fail:**
+- Proceed to Step 6 (Diagnosis)
+
+### Step 6: Diagnose the Failure
+
+#### 6a: Create a Unit Test First (Recommended)
+
+Before modifying production code, try to reproduce the failure as a fast, purely functional unit test. The multiway project follows a sans-I/O architecture, so most behavior can be tested without a cluster.
 
 1. Study the conformance test implementation in `$GATEWAY_CONFORMANCE_SUITE/conformance`
-2. Understand what scenario the test is validating
-3. Create a unit test using this project's testing patterns:
-   - Use `snapshot` semantics for expected outputs
-   - Use `world state` semantics for modeling the reconciler
-   - Implement as a purely functional controller test
+2. Create a unit test using this project's patterns:
+   - Use `WorldSnapshotBuilder` to set up cluster state
+   - Call pure reconciliation functions (`reconcile_gateway`, `reconcile_httproute`, etc.)
+   - Assert on the returned `ReconcileResult`
 
-Having a local unit test provides:
-- Faster iteration cycles
-- Easier debugging
-- Better test isolation
-- Documentation of the expected behavior
+Unit tests run in milliseconds (no cluster, no async), which dramatically speeds up the fix-verify cycle.
 
-If you cannot successfully create a unit test, proceed to the next step.
-
-#### 5b: Investigate Root Cause
+#### 6b: Investigate Root Cause
 
 1. Analyze the failure message to identify the failing assertion
-2. Trace through the code to understand the request flow:
-   - Control plane: How are resources being reconciled?
-   - Data plane: How are requests being routed?
-3. Identify the specific code paths responsible for the failure
-4. Document your findings
+2. Trace through the code:
+   - **Control plane**: Is the ConfigMap being generated correctly?
+   - **Data plane**: Is the proxy routing requests correctly?
+3. Identify the specific code paths responsible
 
-#### 5c: File a Bug Report
+#### 6c: File a Bug Report
 
-Create a Markdown file in `./bug-reports/` documenting:
+Create a Markdown file in `.claude/skills/development-loop/bug-reports/` documenting:
 
 ```markdown
 # Bug Report: [Test Name]
@@ -151,157 +182,101 @@ Create a Markdown file in `./bug-reports/` documenting:
 [Your plan to address the issue]
 ```
 
-### Step 6: Implement the Fix
+### Step 7: Implement and Verify the Fix
 
-1. Make the necessary code changes to fix the identified issue
-2. Keep changes minimal and focused on the specific test
-3. Follow the project's coding conventions and patterns
-
-### Step 7: Verify the Fix
-
-1. If you created a unit test in Step 5a, run it first:
+1. Make the necessary code changes — keep them minimal and focused
+2. Follow the project's coding conventions (see CLAUDE.md)
+3. If you created a unit test in Step 6a, run it first for fast feedback:
    ```bash
-   cargo nextest run [test_name]
+   cargo nextest run <test_name>
    ```
-2. Run the full conformance suite using `gateway-conformance-runner`
-3. Verify:
-   - The previously failing test now **passes**
-   - No other tests have regressed
+4. Run the full conformance suite again:
+   ```bash
+   .claude/skills/gateway-conformance-runner/run-conformance.sh \
+     --cluster-name mw-conformance \
+     --namespace <ticket-id-lowercase> \
+     --skip-build
+   ```
+5. Verify:
+   - The previously failing tests now **pass**
+   - No other tests have **regressed**
 
-If verification fails, return to Step 5 to continue diagnosis.
+If verification fails, return to Step 6 to continue diagnosis.
 
-### Step 8: Document and Report
+### Step 8: Clean Up and Report
 
-Once the test passes:
+Once all tests for the ticket pass:
 
-1. Update the CSV file to change `implemented` from `in-progress` to `true`
+1. **Run formatting and linting** to ensure code quality:
+   ```bash
+   cargo make fmt
+   cargo make clippy-flow
+   ```
 
-2. Create a summary report with the following format:
+2. **Tear down the namespace** to free cluster resources and avoid conflicts:
+   ```bash
+   kubectl delete namespace <ticket-id-lowercase> --wait=true
+   ```
+   This removes all resources (deployments, services, configmaps, etc.) created for this ticket. Always do this, even if the ticket isn't fully complete.
+
+3. **Commit your changes and submit a PR** via Graphite:
+   ```bash
+   gt submit
+   ```
+   When the PR is merged, Linear's GitHub integration will automatically transition the ticket to "Done".
+
+4. **Check in about cluster teardown** — after the PR is submitted, ask the user whether they'd like to tear down the shared `mw-conformance` cluster to save on DigitalOcean costs. If the user says yes, run:
+   ```bash
+   .claude/skills/gateway-conformance-runner/cluster-down.sh --destroy-cluster
+   ```
+   This destroys the DigitalOcean cluster **and** removes its context, cluster entry, and user entry from the local kubeconfig, so it no longer appears in `kubectl config get-contexts`. The cluster can be recreated automatically by `cluster-up.sh` on the next run.
+
+   If the user says no (or wants to keep running more tickets), the cluster stays up and you can continue to Step 6.
+
+5. **Create a summary report**:
 
 ```markdown
-## Test Completed: [Test Name]
+## Ticket Completed: [MULTI-XXXX] [Ticket Title]
 
 ### Summary
 [Brief description of what was implemented]
 
 ### Changes Made
-
-**Before:**
-[Code or behavior before the fix]
-
-**After:**
-[Code or behavior after the fix]
-
-### Files Modified
 - `path/to/file1.rs`: [description of changes]
 - `path/to/file2.rs`: [description of changes]
 
-### Unit Test Added
+### Unit Tests Added
 [Yes/No - if yes, describe the test]
 
 ### Lessons Learned
-[Any insights that might help with future tests]
+[Any insights that might help with future tickets]
 ```
 
-3. Return to Step 1 to continue with the next test
-
-## Running Conformance Tests Locally
-
-Always use the `gateway-conformance-runner` skill for running conformance tests. The local testing workflow provides:
-- Faster iteration cycles
-- Real-time output for debugging
-- Direct access to test logs
-- Ability to run individual tests
-
-Key commands:
-```bash
-# Verify environment
-echo $GATEWAY_CONFORMANCE_SUITE
-
-# Run conformance tests locally
-cd $GATEWAY_CONFORMANCE_SUITE && make conformance
-```
+6. Return to Step 1 to continue with the next ticket.
 
 ## Best Practices
 
-1. **One test at a time**: Focus on a single test per iteration
-2. **Verify first**: Always confirm the test is skipped before enabling
-3. **Minimal changes**: Make the smallest change needed to pass the test
-4. **Document everything**: Keep thorough records in bug reports and summaries
-5. **Unit tests preferred**: Local unit tests make debugging much faster
-6. **No regressions**: Ensure all previously passing tests continue to pass
+1. **One ticket at a time**: Focus on a single ticket per iteration
+2. **Namespace isolation**: Always work in a ticket-specific namespace to avoid conflicts with other agents
+3. **Minimal changes**: Make the smallest change needed to pass the tests
+4. **Unit tests preferred**: Local unit tests (milliseconds) are far faster than conformance runs (minutes)
+5. **No regressions**: Ensure all previously passing tests continue to pass
+6. **Always clean up**: Delete the namespace when done, even if you're abandoning the ticket
+7. **Document everything**: Bug reports and summaries help future iterations
 
 ## Error Recovery
 
-If you encounter issues:
-- **Wrong kubectl context**: Stop immediately, switch to the correct context
-- **Conformance suite not found**: Verify `GATEWAY_CONFORMANCE_SUITE` is set correctly
-- **Multiple tests failing**: Address failing tests before enabling new ones
-- **Stuck on a test**: Document findings, mark as `in-progress`, and consider moving to the next test with a note
-
-## Helper Script: pick-next.sh
-
-A helper script is provided to automate common development loop tasks:
-
-```bash
-# Location
-.claude/skills/development-loop/pick-next.sh
-```
-
-### Script Features
-
-The `pick-next.sh` script automates:
-1. **CSV Concatenation**: Combines all tier files in priority order (tier-1 first)
-2. **Next Test Selection**: Finds the first test with status `in-progress` or `false`
-3. **Test Enabling**: Uses AST-Grep to remove `t.Skip()` calls from conformance tests
-
-### Usage
-
-```bash
-# Show the next test to work on
-./pick-next.sh --show-next
-
-# Enable the next test (removes t.Skip() and updates CSV to in-progress)
-./pick-next.sh
-
-# Preview what would be done without making changes
-./pick-next.sh --dry-run
-
-# List all tests in priority order with their status
-./pick-next.sh --list-all
-
-# Show help
-./pick-next.sh --help
-```
-
-### Requirements
-
-- **GATEWAY_CONFORMANCE_SUITE**: Environment variable pointing to the Gateway API repository clone
-- **ast-grep** (optional): The script will install it via cargo if not available, or fall back to sed
-
-### Example Workflow
-
-```bash
-# 1. See what test to work on next
-./pick-next.sh --show-next
-
-# 2. Enable the test (removes t.Skip() and marks as in-progress)
-./pick-next.sh
-
-# 3. Run conformance tests to see the failure
-cd $GATEWAY_CONFORMANCE_SUITE && make conformance
-
-# 4. Implement the fix in the multiway codebase
-
-# 5. Verify the fix passes
-cd $GATEWAY_CONFORMANCE_SUITE && make conformance
-
-# 6. Manually update the CSV to mark as 'true' when complete
-```
+- **Wrong kubectl context**: Run `doctl kubernetes cluster kubeconfig save mw-conformance`
+- **Cluster not found**: The `cluster-up.sh` script will auto-create the cluster via `cargo make do-create`. If that fails, check DigitalOcean authentication (`doctl auth init`).
+- **Namespace conflicts**: If a namespace already exists from a previous attempt, delete it first:
+  ```bash
+  kubectl delete namespace <ticket-id-lowercase> --wait=true --ignore-not-found
+  ```
+- **Stuck on a ticket**: Document findings in a bug report, commit work-in-progress, tear down the namespace, and move to the next unblocked ticket
+- **No unblocked tickets**: Inform the user — all remaining "Todo" tickets are blocked by open dependencies
+- **Build failures**: Run `cargo check` first to catch compilation errors before building Docker images
 
 ## Files and Directories
 
-- `./pick-next.sh`: Helper script for development loop automation
-- `./test-tiers/*.csv`: Test priority lists and implementation status
 - `./bug-reports/`: Diagnostic reports for failing tests
 - `$GATEWAY_CONFORMANCE_SUITE/conformance`: The official conformance test suite

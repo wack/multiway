@@ -20,7 +20,8 @@
 #   --release           Use production Dockerfile (higher optimization, slower builds)
 #   --skip-build        Skip the Rust compilation and Docker image build steps
 #   --skip-deploy       Skip the gateway controller deployment step
-#   --cluster-name NAME Name of the cluster (default: derived from git branch)
+#   --cluster-name NAME Name of the cluster (default: mw-conformance)
+#   --namespace NAME    Kubernetes namespace for deployment (default: multiway-system)
 #   --dry-run           Print commands without executing them
 #   --help              Show this help message
 #
@@ -41,7 +42,6 @@ source "${SCRIPT_DIR}/lib.sh"
 # =============================================================================
 
 # Script-specific constants for gateway deployment and pod management.
-readonly DEFAULT_NAMESPACE="multiway-system"
 readonly DEFAULT_POD_LABEL="app.kubernetes.io/name=multiway"
 readonly DEFAULT_POD_READY_TIMEOUT="120s"
 readonly DEFAULT_EXTENDED_POD_READY_TIMEOUT="300s"
@@ -54,6 +54,7 @@ readonly DEFAULT_EXTENDED_POD_READY_TIMEOUT="300s"
 # They control which phases of the workflow are executed and how the script
 # identifies the target cluster.
 CLUSTER_NAME=""
+NAMESPACE="multiway-system"
 DEV_BUILD=true
 SKIP_BUILD=false
 SKIP_DEPLOY=false
@@ -85,6 +86,7 @@ Options:
   --skip-build        Skip the Rust compilation and Docker image build steps
   --skip-deploy       Skip the gateway controller deployment step
   --cluster-name NAME Name of the cluster (default: ${default_name})
+  --namespace NAME    Kubernetes namespace for deployment (default: multiway-system)
   --dry-run           Print commands without executing them
   --help              Show this help message
 
@@ -92,6 +94,7 @@ Environment Variables:
   GATEWAY_CONFORMANCE_SUITE   Path to the Gateway API repository root (required)
   DOCKER_REGISTRY             Container registry URL (required for build, e.g., ghcr.io/myorg)
   DO_CLUSTER_NAME             Override the cluster name
+  CONFORMANCE_NAMESPACE       Override the namespace
 
 Examples:
   # Run full conformance test workflow
@@ -134,6 +137,11 @@ parse_arguments() {
         CLUSTER_NAME=$(get_default_cluster_name)
     fi
 
+    # Default namespace to environment variable if set
+    if [[ -n "${CONFORMANCE_NAMESPACE:-}" ]]; then
+        NAMESPACE="${CONFORMANCE_NAMESPACE}"
+    fi
+
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --release)
@@ -153,6 +161,13 @@ parse_arguments() {
                     error_exit "--cluster-name requires a value"
                 fi
                 CLUSTER_NAME="$2"
+                shift 2
+                ;;
+            --namespace)
+                if [[ -z "${2:-}" ]]; then
+                    error_exit "--namespace requires a value"
+                fi
+                NAMESPACE="$2"
                 shift 2
                 ;;
             --dry-run)
@@ -395,29 +410,29 @@ namespace_exists() {
 # resources within it (deployments, services, configmaps, etc.).
 #######################################
 cleanup_existing_deployment() {
-    info "Cleaning up existing deployments in namespace '${DEFAULT_NAMESPACE}'..."
+    info "Cleaning up existing deployments in namespace '${NAMESPACE}'..."
 
     if [[ "${DRY_RUN}" == true ]]; then
-        echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} kubectl delete namespace ${DEFAULT_NAMESPACE} --ignore-not-found"
-        echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} kubectl wait --for=delete namespace/${DEFAULT_NAMESPACE} --timeout=60s"
+        echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} kubectl delete namespace ${NAMESPACE} --ignore-not-found"
+        echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} kubectl wait --for=delete namespace/${NAMESPACE} --timeout=60s"
         success "Cleanup skipped (dry-run mode)"
         return 0
     fi
 
-    if ! namespace_exists "${DEFAULT_NAMESPACE}"; then
-        success "Namespace '${DEFAULT_NAMESPACE}' does not exist, nothing to clean up"
+    if ! namespace_exists "${NAMESPACE}"; then
+        success "Namespace '${NAMESPACE}' does not exist, nothing to clean up"
         return 0
     fi
 
-    info "Deleting namespace '${DEFAULT_NAMESPACE}' and all its resources..."
-    if ! kubectl delete namespace "${DEFAULT_NAMESPACE}" --ignore-not-found; then
-        error_exit "Failed to delete namespace '${DEFAULT_NAMESPACE}'"
+    info "Deleting namespace '${NAMESPACE}' and all its resources..."
+    if ! kubectl delete namespace "${NAMESPACE}" --ignore-not-found; then
+        error_exit "Failed to delete namespace '${NAMESPACE}'"
     fi
 
     info "Waiting for namespace deletion to complete..."
-    if ! kubectl wait --for=delete namespace/"${DEFAULT_NAMESPACE}" --timeout=60s 2>/dev/null; then
-        if namespace_exists "${DEFAULT_NAMESPACE}"; then
-            error_exit "Namespace '${DEFAULT_NAMESPACE}' was not deleted within timeout"
+    if ! kubectl wait --for=delete namespace/"${NAMESPACE}" --timeout=60s 2>/dev/null; then
+        if namespace_exists "${NAMESPACE}"; then
+            error_exit "Namespace '${NAMESPACE}' was not deleted within timeout"
         fi
     fi
 
@@ -430,19 +445,19 @@ cleanup_existing_deployment() {
 # cluster and makes cleanup straightforward (delete the namespace).
 #######################################
 create_fresh_namespace() {
-    info "Creating fresh namespace '${DEFAULT_NAMESPACE}'..."
+    info "Creating fresh namespace '${NAMESPACE}'..."
 
     if [[ "${DRY_RUN}" == true ]]; then
-        echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} kubectl create namespace ${DEFAULT_NAMESPACE}"
+        echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} kubectl create namespace ${NAMESPACE}"
         success "Namespace creation skipped (dry-run mode)"
         return 0
     fi
 
-    if ! kubectl create namespace "${DEFAULT_NAMESPACE}"; then
-        error_exit "Failed to create namespace '${DEFAULT_NAMESPACE}'"
+    if ! kubectl create namespace "${NAMESPACE}"; then
+        error_exit "Failed to create namespace '${NAMESPACE}'"
     fi
 
-    success "Namespace '${DEFAULT_NAMESPACE}' created"
+    success "Namespace '${NAMESPACE}' created"
 }
 
 #######################################
@@ -486,29 +501,29 @@ wait_for_controller_ready() {
     info "Waiting for controller pods to be ready..."
 
     if [[ "${DRY_RUN}" == true ]]; then
-        echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} kubectl wait --for=condition=Ready pods -l ${DEFAULT_POD_LABEL} -n ${DEFAULT_NAMESPACE} --timeout=${DEFAULT_POD_READY_TIMEOUT}"
+        echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} kubectl wait --for=condition=Ready pods -l ${DEFAULT_POD_LABEL} -n ${NAMESPACE} --timeout=${DEFAULT_POD_READY_TIMEOUT}"
         success "Pod readiness check skipped (dry-run mode)"
         return 0
     fi
 
-    if kubectl wait --for=condition=Ready pods -l "${DEFAULT_POD_LABEL}" -n "${DEFAULT_NAMESPACE}" --timeout="${DEFAULT_POD_READY_TIMEOUT}" 2>/dev/null; then
+    if kubectl wait --for=condition=Ready pods -l "${DEFAULT_POD_LABEL}" -n "${NAMESPACE}" --timeout="${DEFAULT_POD_READY_TIMEOUT}" 2>/dev/null; then
         success "Controller pods are ready"
         return 0
     fi
 
     warn "Pods not ready within ${DEFAULT_POD_READY_TIMEOUT}, extending wait to ${DEFAULT_EXTENDED_POD_READY_TIMEOUT}..."
 
-    if kubectl wait --for=condition=Ready pods -l "${DEFAULT_POD_LABEL}" -n "${DEFAULT_NAMESPACE}" --timeout="${DEFAULT_EXTENDED_POD_READY_TIMEOUT}" 2>/dev/null; then
+    if kubectl wait --for=condition=Ready pods -l "${DEFAULT_POD_LABEL}" -n "${NAMESPACE}" --timeout="${DEFAULT_EXTENDED_POD_READY_TIMEOUT}" 2>/dev/null; then
         success "Controller pods are ready (after extended wait)"
         return 0
     fi
 
     warn "Pods still not ready. Current pod status:"
-    kubectl get pods -n "${DEFAULT_NAMESPACE}" -l "${DEFAULT_POD_LABEL}"
+    kubectl get pods -n "${NAMESPACE}" -l "${DEFAULT_POD_LABEL}"
 
     error_exit "Controller pods failed to become ready within ${DEFAULT_EXTENDED_POD_READY_TIMEOUT}.
 Please check the pod logs for errors:
-    kubectl logs -n ${DEFAULT_NAMESPACE} -l ${DEFAULT_POD_LABEL}"
+    kubectl logs -n ${NAMESPACE} -l ${DEFAULT_POD_LABEL}"
 }
 
 #######################################
@@ -595,6 +610,7 @@ main() {
     echo ""
     info "Configuration:"
     info "  Cluster name: ${CLUSTER_NAME}"
+    info "  Namespace:    ${NAMESPACE}"
     info "  Dev build:    ${DEV_BUILD}"
     info "  Skip build:   ${SKIP_BUILD}"
     info "  Skip deploy:  ${SKIP_DEPLOY}"

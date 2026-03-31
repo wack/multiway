@@ -3,19 +3,17 @@
 #
 # cluster-up.sh
 #
-# Ensures the DigitalOcean Kubernetes cluster is running and ready for use.
-# If the cluster exists, it clears the gateway namespace for a fresh state.
-# If the cluster doesn't exist, it creates one.
-# Either way, it ensures the kubectl context is properly configured.
-#
-# The cluster name defaults to a sanitized version of the current git branch,
-# prefixed with "mw-" (e.g., branch "feature/my-test" becomes "mw-feature-my-test").
+# Ensures the DigitalOcean Kubernetes cluster is accessible and creates
+# an isolated namespace for conformance testing. If the cluster doesn't exist,
+# it is created automatically. The namespace is derived from the current git
+# branch name (lowercased, sanitized).
 #
 # Usage:
 #   ./cluster-up.sh [OPTIONS]
 #
 # Options:
-#   --cluster-name NAME   Name of the DigitalOcean cluster (default: derived from git branch)
+#   --cluster-name NAME   Name of the DigitalOcean cluster (default: mw-conformance)
+#   --namespace NAME      Namespace to create (default: derived from git branch)
 #   --dry-run             Print commands without executing them
 #   --help                Show this help message
 #
@@ -35,15 +33,17 @@ source "${SCRIPT_DIR}/lib.sh"
 # CONFIGURATION
 # =============================================================================
 
-# Script-specific constants.
-readonly DEFAULT_NAMESPACE="multiway-system"
+# The default conformance cluster. This cluster is long-lived and shared across
+# all conformance test runs. If it doesn't exist, it will be created automatically.
+readonly DEFAULT_CLUSTER_NAME="mw-conformance"
 
 # =============================================================================
 # GLOBAL STATE
 # =============================================================================
 
 # These variables are set by parse_arguments() and used throughout the script.
-CLUSTER_NAME=""
+CLUSTER_NAME="${DEFAULT_CLUSTER_NAME}"
+NAMESPACE=""
 DRY_RUN=false
 
 # =============================================================================
@@ -54,39 +54,54 @@ DRY_RUN=false
 # Prints the help message and exits.
 #######################################
 show_help() {
-    local default_name
-    default_name=$(get_default_cluster_name)
-
     cat << EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Ensures the DigitalOcean Kubernetes cluster is running and ready for use.
-If the cluster exists, clears the gateway namespace for a fresh state.
-If the cluster doesn't exist, creates a new one.
+Ensures the DigitalOcean Kubernetes cluster is accessible and creates
+an isolated namespace for conformance testing. If the cluster doesn't
+exist, it will be created automatically.
 
-The cluster name defaults to a sanitized version of the current git branch,
-prefixed with "${CLUSTER_NAME_PREFIX}-" (e.g., "feature/my-test" becomes "${CLUSTER_NAME_PREFIX}-feature-my-test").
+The namespace defaults to a sanitized version of the current git branch name,
+lowercased (e.g., branch "robbie/multi-1101" becomes "multi-1101").
 
 Options:
-  --cluster-name NAME   Name of the DigitalOcean cluster (default: ${default_name})
+  --cluster-name NAME   Name of the DigitalOcean cluster (default: ${DEFAULT_CLUSTER_NAME})
+  --namespace NAME      Namespace to create (default: derived from git branch)
   --dry-run             Print commands without executing them
   --help                Show this help message
 
 Environment Variables:
-  DO_CLUSTER_NAME       Override the cluster name
-  DO_REGION             DigitalOcean region for cluster (default: nyc3)
+  DO_CLUSTER_NAME         Override the cluster name
+  CONFORMANCE_NAMESPACE   Override the namespace
 
 Examples:
-  # Start or prepare cluster for current branch
+  # Prepare namespace for current branch
   ./cluster-up.sh
 
-  # Use a specific cluster name
-  ./cluster-up.sh --cluster-name my-test-cluster
+  # Use a specific namespace (e.g., for a Linear ticket)
+  ./cluster-up.sh --namespace multi-1101
 
   # See what commands would be run
   ./cluster-up.sh --dry-run
 EOF
     exit 0
+}
+
+#######################################
+# Derives a namespace name from the current git branch.
+# Extracts the last path component (e.g., "robbie/multi-1101" -> "multi-1101")
+# and lowercases it.
+#######################################
+get_default_namespace() {
+    local branch_name
+    if branch_name=$(git rev-parse --abbrev-ref HEAD 2>/dev/null); then
+        # Take the last path component (after the last /)
+        local base_name="${branch_name##*/}"
+        # Lowercase and sanitize for Kubernetes namespace rules
+        echo "${base_name}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g; s/^-//; s/-$//'
+    else
+        echo "multiway-system"
+    fi
 }
 
 # =============================================================================
@@ -99,11 +114,16 @@ EOF
 #   $@ - All command-line arguments passed to the script
 #######################################
 parse_arguments() {
-    # Default to environment variable, then git branch-based name
+    # Default cluster name from environment variable
     if [[ -n "${DO_CLUSTER_NAME:-}" ]]; then
         CLUSTER_NAME="${DO_CLUSTER_NAME}"
+    fi
+
+    # Default namespace from environment variable, then git branch
+    if [[ -n "${CONFORMANCE_NAMESPACE:-}" ]]; then
+        NAMESPACE="${CONFORMANCE_NAMESPACE}"
     else
-        CLUSTER_NAME=$(get_default_cluster_name)
+        NAMESPACE=$(get_default_namespace)
     fi
 
     while [[ $# -gt 0 ]]; do
@@ -113,6 +133,13 @@ parse_arguments() {
                     error_exit "--cluster-name requires a value"
                 fi
                 CLUSTER_NAME="$2"
+                shift 2
+                ;;
+            --namespace)
+                if [[ -z "${2:-}" ]]; then
+                    error_exit "--namespace requires a value"
+                fi
+                NAMESPACE="$2"
                 shift 2
                 ;;
             --dry-run)
@@ -147,27 +174,10 @@ check_prerequisites() {
 }
 
 # =============================================================================
-# CLUSTER MANAGEMENT
+# CLUSTER AND NAMESPACE MANAGEMENT
 #
 # Note: do_cluster_exists is provided by lib.sh
 # =============================================================================
-
-#######################################
-# Creates a new DigitalOcean Kubernetes cluster.
-# Uses cargo make do-create which handles all configuration.
-#######################################
-create_cluster() {
-    info "Creating DigitalOcean Kubernetes cluster '${CLUSTER_NAME}'..."
-
-    # Export the cluster name so cargo make can use it
-    export DO_CLUSTER_NAME="${CLUSTER_NAME}"
-
-    if ! run_cmd cargo make do-create; then
-        error_exit "Failed to create DigitalOcean cluster '${CLUSTER_NAME}'"
-    fi
-
-    success "Cluster '${CLUSTER_NAME}' created successfully"
-}
 
 #######################################
 # Saves the kubeconfig for the cluster.
@@ -210,63 +220,77 @@ verify_cluster_accessible() {
 }
 
 #######################################
-# Clears the gateway namespace to ensure a fresh state.
-# Deletes the namespace if it exists, which removes all resources within it.
+# Creates a fresh namespace for this conformance run.
+# Deletes the namespace first if it already exists, to ensure a clean slate.
 #######################################
-clear_namespace() {
-    info "Clearing namespace '${DEFAULT_NAMESPACE}' for fresh state..."
+create_namespace() {
+    info "Setting up namespace '${NAMESPACE}'..."
 
     if [[ "${DRY_RUN}" == true ]]; then
-        echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} kubectl delete namespace ${DEFAULT_NAMESPACE} --ignore-not-found"
-        echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} kubectl wait --for=delete namespace/${DEFAULT_NAMESPACE} --timeout=60s"
-        success "Namespace cleanup skipped (dry-run mode)"
+        echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} kubectl delete namespace ${NAMESPACE} --ignore-not-found --wait=true"
+        echo -e "${COLOR_YELLOW}[DRY-RUN]${COLOR_RESET} kubectl create namespace ${NAMESPACE}"
+        success "Namespace setup skipped (dry-run mode)"
         return 0
     fi
 
-    # Check if namespace exists
-    if ! kubectl get namespace "${DEFAULT_NAMESPACE}" &>/dev/null; then
-        success "Namespace '${DEFAULT_NAMESPACE}' does not exist, nothing to clear"
-        return 0
-    fi
-
-    # Delete the namespace
-    info "Deleting namespace '${DEFAULT_NAMESPACE}' and all its resources..."
-    if ! kubectl delete namespace "${DEFAULT_NAMESPACE}" --ignore-not-found; then
-        error_exit "Failed to delete namespace '${DEFAULT_NAMESPACE}'"
-    fi
-
-    # Wait for deletion to complete
-    info "Waiting for namespace deletion to complete..."
-    if ! kubectl wait --for=delete namespace/"${DEFAULT_NAMESPACE}" --timeout=60s 2>/dev/null; then
-        # The wait command may fail if the namespace is already gone
-        if kubectl get namespace "${DEFAULT_NAMESPACE}" &>/dev/null; then
-            error_exit "Namespace '${DEFAULT_NAMESPACE}' was not deleted within timeout"
+    # Delete existing namespace if present (ensures clean state)
+    if kubectl get namespace "${NAMESPACE}" &>/dev/null; then
+        warn "Namespace '${NAMESPACE}' already exists, deleting for clean state..."
+        if ! kubectl delete namespace "${NAMESPACE}" --wait=true; then
+            error_exit "Failed to delete existing namespace '${NAMESPACE}'"
+        fi
+        # Wait for deletion to fully complete
+        if ! kubectl wait --for=delete namespace/"${NAMESPACE}" --timeout=60s 2>/dev/null; then
+            if kubectl get namespace "${NAMESPACE}" &>/dev/null; then
+                error_exit "Namespace '${NAMESPACE}' was not deleted within timeout"
+            fi
         fi
     fi
 
-    success "Namespace '${DEFAULT_NAMESPACE}' cleared"
+    # Create fresh namespace
+    if ! kubectl create namespace "${NAMESPACE}"; then
+        error_exit "Failed to create namespace '${NAMESPACE}'"
+    fi
+
+    success "Namespace '${NAMESPACE}' created"
 }
 
 #######################################
-# Ensures the cluster is up and ready.
-# Creates if missing, clears namespace if existing.
+# Creates a new DigitalOcean Kubernetes cluster.
+# Uses cargo make do-create which handles all configuration.
 #######################################
-ensure_cluster_ready() {
-    info "=== Cluster Setup ==="
+create_cluster() {
+    info "Creating DigitalOcean Kubernetes cluster '${CLUSTER_NAME}'..."
 
-    if do_cluster_exists "${CLUSTER_NAME}"; then
-        success "DigitalOcean cluster '${CLUSTER_NAME}' already exists"
-        save_kubeconfig
-        verify_cluster_accessible
-        clear_namespace
-    else
-        warn "DigitalOcean cluster '${CLUSTER_NAME}' does not exist"
-        create_cluster
-        save_kubeconfig
-        verify_cluster_accessible
+    # Export the cluster name so cargo make can use it
+    export DO_CLUSTER_NAME="${CLUSTER_NAME}"
+
+    if ! run_cmd cargo make do-create; then
+        error_exit "Failed to create DigitalOcean cluster '${CLUSTER_NAME}'"
     fi
 
-    success "Cluster is ready for use"
+    success "Cluster '${CLUSTER_NAME}' created successfully"
+}
+
+#######################################
+# Ensures the cluster is accessible and namespace is ready.
+# If the cluster doesn't exist, creates it automatically.
+#######################################
+ensure_ready() {
+    info "=== Cluster and Namespace Setup ==="
+
+    if do_cluster_exists "${CLUSTER_NAME}"; then
+        success "Cluster '${CLUSTER_NAME}' already exists"
+    else
+        warn "Cluster '${CLUSTER_NAME}' does not exist, creating it..."
+        create_cluster
+    fi
+
+    save_kubeconfig
+    verify_cluster_accessible
+    create_namespace
+
+    success "Cluster and namespace ready"
     echo ""
 }
 
@@ -279,24 +303,25 @@ main() {
 
     echo ""
     info "==========================================="
-    info "DigitalOcean Kubernetes Cluster Startup"
+    info "Conformance Namespace Setup"
     info "==========================================="
     echo ""
     info "Configuration:"
     info "  Cluster name: ${CLUSTER_NAME}"
+    info "  Namespace:    ${NAMESPACE}"
     info "  Dry run:      ${DRY_RUN}"
     echo ""
 
     check_prerequisites
-    ensure_cluster_ready
+    ensure_ready
 
     echo ""
     success "==========================================="
-    success "Cluster startup complete"
+    success "Namespace setup complete"
     success "==========================================="
     echo ""
-    info "kubectl context is now set to the cluster."
-    info "You can now run conformance tests or deploy applications."
+    info "kubectl context is set to cluster '${CLUSTER_NAME}'."
+    info "Namespace '${NAMESPACE}' is ready for conformance testing."
 }
 
 main "$@"
