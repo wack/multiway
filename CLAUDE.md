@@ -4,7 +4,7 @@ The current year is 2026. This file provides guidance to Claude Code (claude.ai/
 
 ## Project Overview
 
-Multiway is a Kubernetes [Gateway API](https://gateway-api.sigs.k8s.io/) implementation written in Rust (2024 edition). It implements a split-architecture controller: a **control plane** that reconciles Gateway API resources and a **data plane** (built on [Pingora](https://github.com/cloudflare/pingora)) that proxies HTTP traffic. The controller name is `io.multiway/gateway-controller`.
+Multiway is a Kubernetes [Gateway API](https://gateway-api.sigs.k8s.io/) implementation written in Rust (2024 edition). It implements a split-architecture controller: a **control plane** that reconciles Gateway API resources and a **data plane** (built on [proxy-core](crates/proxy-core/), a [monoio](https://github.com/bytedance/monoio)-based HTTP proxy) that proxies HTTP traffic. The controller name is `io.multiway/gateway-controller`.
 
 ## Build and Development Commands
 
@@ -64,7 +64,7 @@ Do not commit or mark work as done until validation passes.
 multiway/
 ├── crates/
 │   ├── controlplane/        # Core controller logic (binary: `multiway`)
-│   ├── dataplane/           # Pingora-based HTTP proxy (binary: `multiway-dataplane`)
+│   ├── dataplane/           # proxy-core HTTP proxy (binary: `multiway-dataplane`)
 │   └── gateway-crds/        # Auto-generated Rust bindings for Gateway API CRDs
 ├── .crds/v1.2.1/            # Gateway API v1.2.1 CRD YAML definitions
 ├── conformance/             # Gateway API conformance test suite (Docker + K8s Job)
@@ -220,7 +220,7 @@ Each reconciler follows the same fetch → compute → execute pattern.
 
 ## Data Plane
 
-The data plane (`crates/dataplane/`) is a Pingora-based HTTP proxy:
+The data plane (`crates/dataplane/`) is a proxy-core (monoio-based) HTTP proxy:
 
 - **Config source**: Reads a ConfigMap (`multiway-config-{gateway_name}`) containing JSON `GatewayConfig`
 - **Hot reload**: Watches ConfigMap via K8s API (not filesystem mounts) using `arc-swap` for atomic config swaps
@@ -248,7 +248,7 @@ Managed resource names follow the pattern `multiway-{gateway_name}`.
 ```
 multiway version                # Print version
 multiway controller [OPTIONS]   # Run the control plane
-multiway gateway [OPTIONS]      # Run the data plane (Pingora)
+multiway gateway [OPTIONS]      # Run the data plane (proxy-core)
 ```
 
 - Global options: `--log-level`, `--log-format` (text/json), `--enable-colors`

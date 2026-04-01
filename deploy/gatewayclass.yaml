@@ -6,4 +6,4 @@ metadata:
     app.kubernetes.io/name: multiway
 spec:
   controllerName: io.multiway/gateway-controller
-  description: Gateway API implementation using Pingora data plane
+  description: Gateway API implementation using proxy-core data plane
