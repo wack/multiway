@@ -658,7 +658,6 @@ mod tests {
                         message: "Accepted".to_string(),
                     },
                 ]),
-                supported_features: None,
             }),
         }
     }

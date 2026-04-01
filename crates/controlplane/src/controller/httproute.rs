@@ -902,7 +902,6 @@ mod tests {
                 weight: None,
                 filters: None,
             }]),
-            name: None,
             timeouts: None,
         };
 
@@ -928,7 +927,6 @@ mod tests {
                 weight: None,
                 filters: None,
             }]),
-            name: None,
             timeouts: Some(HttpRouteRulesTimeouts {
                 request: Some("30s".to_string()),
                 backend_request: Some("10s".to_string()),

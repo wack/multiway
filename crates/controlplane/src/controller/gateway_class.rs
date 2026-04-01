@@ -193,7 +193,6 @@ mod tests {
                 reason: "Accepted".to_string(),
                 message: "Accepted".to_string(),
             }]),
-            supported_features: None,
         });
         assert!(is_gateway_class_accepted(&gc));
     }
@@ -211,7 +210,6 @@ mod tests {
                 reason: "InvalidConfiguration".to_string(),
                 message: "Configuration is invalid".to_string(),
             }]),
-            supported_features: None,
         });
         assert!(!is_gateway_class_accepted(&gc));
     }
@@ -230,7 +228,6 @@ mod tests {
                 reason: "Accepted".to_string(),
                 message: "Accepted".to_string(),
             }]),
-            supported_features: None,
         });
 
         // Should be accepted when observedGeneration matches resource generation
@@ -243,7 +240,6 @@ mod tests {
         let mut gc = create_test_gateway_class(CONTROLLER_NAME);
         gc.status = Some(GatewayClassStatus {
             conditions: Some(vec![]),
-            supported_features: None,
         });
         assert!(!is_gateway_class_accepted(&gc));
     }
@@ -261,7 +257,6 @@ mod tests {
                 reason: "Something".to_string(),
                 message: "Something".to_string(),
             }]),
-            supported_features: None,
         });
         assert!(!is_gateway_class_accepted(&gc));
     }
