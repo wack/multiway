@@ -209,6 +209,18 @@ impl WorldSnapshot {
         )
     }
 
+    /// Check if a cross-namespace Secret reference from a Gateway is allowed
+    pub fn is_secret_reference_allowed(&self, gateway_ns: &str, secret_ns: &str) -> bool {
+        self.is_reference_allowed(
+            gateway_ns,
+            "gateway.networking.k8s.io",
+            "Gateway",
+            secret_ns,
+            "",
+            "Secret",
+        )
+    }
+
     /// Get the first available node internal IP address.
     ///
     /// This is used to determine the external address for Gateways when using

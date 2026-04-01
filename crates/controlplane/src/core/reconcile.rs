@@ -9,9 +9,9 @@ use std::time::Duration;
 
 use chrono::DateTime;
 use gateway_crds::{
-    Gateway, GatewayClassStatus, GatewayStatus, GatewayStatusAddresses, GatewayStatusListeners,
-    GatewayStatusListenersSupportedKinds, HttpRouteStatus, HttpRouteStatusParents,
-    HttpRouteStatusParentsParentRef,
+    Gateway, GatewayClassStatus, GatewayListenersTlsMode, GatewayStatus, GatewayStatusAddresses,
+    GatewayStatusListeners, GatewayStatusListenersSupportedKinds, HttpRouteStatus,
+    HttpRouteStatusParents, HttpRouteStatusParentsParentRef,
 };
 use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec};
 use k8s_openapi::api::core::v1::{
@@ -34,7 +34,8 @@ use super::validate::{
     validate_parent_ref,
 };
 use crate::controller::config::{
-    CONFIG_KEY, DataPlaneNames, GatewayConfig, ListenerConfig, Protocol,
+    CONFIG_KEY, CertificateRef, DataPlaneNames, GatewayConfig, InlineCertificate, ListenerConfig,
+    Protocol, TlsConfig, TlsMode,
 };
 use crate::controller::context::ControllerConfig;
 
@@ -172,7 +173,8 @@ pub fn reconcile_gateway(
     let names = DataPlaneNames::new(gateway_ns, gateway_name);
 
     // Build ConfigMap
-    let gateway_config = build_gateway_config(gateway, gateway_ns, snapshot);
+    let (gateway_config, listener_refs_resolved) =
+        build_gateway_config(gateway, gateway_ns, snapshot);
     let configmap = build_configmap(&names, &gateway_config, gateway);
     result = result.upsert_configmap(configmap);
 
@@ -218,6 +220,7 @@ pub fn reconcile_gateway(
         programmed_message,
         addresses,
         attached_routes,
+        &listener_refs_resolved,
     );
 
     result
@@ -448,6 +451,7 @@ fn derive_gateway_addresses(
 /// This separates the Accepted and Programmed conditions: a Gateway can be Accepted=True
 /// (the controller acknowledges it) while Programmed=False (the data plane doesn't have
 /// a reachable address yet).
+#[allow(clippy::too_many_arguments)]
 fn build_gateway_status_accepted(
     now: DateTime<Utc>,
     gateway: &Gateway,
@@ -456,6 +460,7 @@ fn build_gateway_status_accepted(
     programmed_message: &str,
     addresses: Option<Vec<GatewayStatusAddresses>>,
     attached_routes: i32,
+    listener_refs_resolved: &BTreeMap<String, bool>,
 ) -> GatewayStatus {
     let time = Time(now);
     let programmed_status = if programmed { "True" } else { "False" };
@@ -492,6 +497,22 @@ fn build_gateway_status_accepted(
                 _ => vec![],
             };
 
+            let refs_resolved = listener_refs_resolved.get(&l.name).copied().unwrap_or(true);
+
+            let (resolved_status, resolved_reason, resolved_message) = if refs_resolved {
+                (
+                    "True",
+                    "ResolvedRefs",
+                    "All references resolved".to_string(),
+                )
+            } else {
+                (
+                    "False",
+                    "InvalidCertificateRef",
+                    "One or more certificate references could not be resolved".to_string(),
+                )
+            };
+
             GatewayStatusListeners {
                 name: l.name.clone(),
                 attached_routes,
@@ -507,11 +528,11 @@ fn build_gateway_status_accepted(
                     },
                     Condition {
                         type_: "ResolvedRefs".to_string(),
-                        status: "True".to_string(),
+                        status: resolved_status.to_string(),
                         observed_generation: gateway.metadata.generation,
                         last_transition_time: time.clone(),
-                        reason: "ResolvedRefs".to_string(),
-                        message: "All references resolved".to_string(),
+                        reason: resolved_reason.to_string(),
+                        message: resolved_message,
                     },
                     Condition {
                         type_: "Programmed".to_string(),
@@ -537,23 +558,121 @@ fn build_gateway_status_accepted(
     }
 }
 
-/// Build GatewayConfig for the data plane
+/// Resolve TLS configuration for a single listener.
+///
+/// Returns `(tls_config, all_refs_resolved)`:
+/// - For HTTP listeners: `(None, true)` — no TLS needed
+/// - For HTTPS listeners: resolves certificate Secret references into inline PEM data
+///   - If all secrets resolve: `(Some(tls_config), true)`
+///   - If any secret is missing or cross-ns ref not permitted: `(partial_config, false)`
+fn resolve_listener_tls(
+    listener: &gateway_crds::GatewayListeners,
+    gateway_ns: &str,
+    snapshot: &WorldSnapshot,
+) -> (Option<TlsConfig>, bool) {
+    let tls_spec = match &listener.tls {
+        Some(tls) => tls,
+        None => return (None, true), // HTTP listener, no TLS needed
+    };
+
+    let mode = match &tls_spec.mode {
+        Some(GatewayListenersTlsMode::Passthrough) => TlsMode::Passthrough,
+        _ => TlsMode::Terminate, // Default to Terminate per Gateway API spec
+    };
+
+    let cert_refs = tls_spec.certificate_refs.as_deref().unwrap_or_default();
+
+    let mut certificates = Vec::new();
+    let mut inline_certificates = Vec::new();
+    let mut all_resolved = true;
+
+    for cert_ref in cert_refs {
+        let secret_ns = cert_ref.namespace.as_deref().unwrap_or(gateway_ns);
+        let secret_name = &cert_ref.name;
+
+        certificates.push(CertificateRef {
+            namespace: secret_ns.to_string(),
+            name: secret_name.clone(),
+        });
+
+        // Check cross-namespace permission
+        if secret_ns != gateway_ns && !snapshot.is_secret_reference_allowed(gateway_ns, secret_ns) {
+            all_resolved = false;
+            continue;
+        }
+
+        // Look up the Secret
+        let secret = match snapshot.get_secret(secret_ns, secret_name) {
+            Some(s) => s,
+            None => {
+                all_resolved = false;
+                continue;
+            }
+        };
+
+        // Extract PEM data from the Secret
+        let data = match &secret.data {
+            Some(d) => d,
+            None => {
+                all_resolved = false;
+                continue;
+            }
+        };
+
+        let cert_pem = data
+            .get("tls.crt")
+            .and_then(|b| String::from_utf8(b.0.clone()).ok());
+        let key_pem = data
+            .get("tls.key")
+            .and_then(|b| String::from_utf8(b.0.clone()).ok());
+
+        match (cert_pem, key_pem) {
+            (Some(cert), Some(key)) => {
+                let hostnames = listener.hostname.iter().cloned().collect();
+                inline_certificates.push(InlineCertificate {
+                    cert_pem: cert,
+                    key_pem: key,
+                    hostnames,
+                });
+            }
+            _ => {
+                all_resolved = false;
+            }
+        }
+    }
+
+    let tls_config = TlsConfig {
+        mode,
+        certificates,
+        inline_certificates,
+    };
+
+    (Some(tls_config), all_resolved)
+}
+
+/// Build GatewayConfig for the data plane.
+///
+/// Returns `(config, listener_refs_resolved)` where `listener_refs_resolved`
+/// maps each listener name to whether all its certificate references resolved.
 fn build_gateway_config(
     gateway: &Gateway,
     namespace: &str,
     snapshot: &WorldSnapshot,
-) -> GatewayConfig {
+) -> (GatewayConfig, BTreeMap<String, bool>) {
     let mut config = GatewayConfig::new(namespace, gateway.name_any());
+    let mut listener_refs_resolved = BTreeMap::new();
 
     // Add listeners
     for listener in &gateway.spec.listeners {
         let protocol = listener.protocol.parse().unwrap_or(Protocol::Http);
+        let (tls, refs_resolved) = resolve_listener_tls(listener, namespace, snapshot);
+        listener_refs_resolved.insert(listener.name.clone(), refs_resolved);
         let listener_config = ListenerConfig {
             name: listener.name.clone(),
             port: listener.port as u16,
             protocol,
             hostname: listener.hostname.clone(),
-            tls: None, // TODO: Handle TLS configuration
+            tls,
         };
         config.add_listener(listener_config);
     }
@@ -574,7 +693,7 @@ fn build_gateway_config(
         }
     }
 
-    config
+    (config, listener_refs_resolved)
 }
 
 /// Build a ConfigMap for the gateway configuration
@@ -901,7 +1020,7 @@ pub fn reconcile_httproute(
 
             if let Some(gateway) = snapshot.get_gateway(parent_namespace, parent_name) {
                 let names = DataPlaneNames::new(parent_namespace, parent_name);
-                let gateway_config = build_gateway_config(gateway, parent_namespace, snapshot);
+                let (gateway_config, _) = build_gateway_config(gateway, parent_namespace, snapshot);
                 let configmap = build_configmap(&names, &gateway_config, gateway);
                 result = result.upsert_configmap(configmap);
             }
@@ -966,7 +1085,7 @@ mod tests {
     use crate::core::snapshot::WorldSnapshotBuilder;
     use chrono::TimeZone;
     use gateway_crds::{GatewayClassSpec, GatewaySpec, HttpRouteParentRefs, HttpRouteSpec};
-    use k8s_openapi::api::core::v1::Node;
+    use k8s_openapi::api::core::v1::{Node, Secret};
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 
     fn default_config() -> ControllerConfig {
@@ -2030,5 +2149,284 @@ mod tests {
         assert_eq!(addresses.len(), 1);
         assert_eq!(addresses[0].value, "abc123.us-east-1.elb.amazonaws.com");
         assert_eq!(addresses[0].r#type.as_deref(), Some("Hostname"));
+    }
+
+    // ========================================
+    // TLS Configuration Tests
+    // ========================================
+
+    /// Helper: create a Gateway with an HTTPS listener referencing a TLS secret
+    fn create_https_gateway(
+        ns: &str,
+        name: &str,
+        class: &str,
+        secret_ns: Option<&str>,
+        secret_name: &str,
+        hostname: Option<&str>,
+    ) -> Gateway {
+        Gateway {
+            metadata: ObjectMeta {
+                name: Some(name.to_string()),
+                namespace: Some(ns.to_string()),
+                uid: Some("test-uid".to_string()),
+                generation: Some(1),
+                ..Default::default()
+            },
+            spec: GatewaySpec {
+                gateway_class_name: class.to_string(),
+                listeners: vec![gateway_crds::GatewayListeners {
+                    name: "https".to_string(),
+                    port: 443,
+                    protocol: "HTTPS".to_string(),
+                    hostname: hostname.map(String::from),
+                    allowed_routes: None,
+                    tls: Some(gateway_crds::GatewayListenersTls {
+                        mode: Some(gateway_crds::GatewayListenersTlsMode::Terminate),
+                        certificate_refs: Some(vec![
+                            gateway_crds::GatewayListenersTlsCertificateRefs {
+                                group: None,
+                                kind: None,
+                                name: secret_name.to_string(),
+                                namespace: secret_ns.map(String::from),
+                            },
+                        ]),
+                        options: None,
+                    }),
+                }],
+                addresses: None,
+                infrastructure: None,
+            },
+            status: None,
+        }
+    }
+
+    /// Helper: create a TLS Secret with cert and key data
+    fn create_tls_secret(ns: &str, name: &str) -> Secret {
+        use k8s_openapi::ByteString;
+        let mut data = BTreeMap::new();
+        data.insert(
+            "tls.crt".to_string(),
+            ByteString(
+                "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----"
+                    .as_bytes()
+                    .to_vec(),
+            ),
+        );
+        data.insert(
+            "tls.key".to_string(),
+            ByteString(
+                "-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----"
+                    .as_bytes()
+                    .to_vec(),
+            ),
+        );
+        Secret {
+            metadata: ObjectMeta {
+                name: Some(name.to_string()),
+                namespace: Some(ns.to_string()),
+                ..Default::default()
+            },
+            data: Some(data),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_https_listener_tls_resolved() {
+        let gc = create_accepted_gateway_class("multiway");
+        let gw = create_https_gateway(
+            "default",
+            "my-gw",
+            "multiway",
+            None,
+            "my-tls",
+            Some("example.com"),
+        );
+        let secret = create_tls_secret("default", "my-tls");
+
+        let snapshot = WorldSnapshotBuilder::new()
+            .with_gateway_class(gc)
+            .with_gateway(gw)
+            .with_secret(secret)
+            .build();
+        let config = default_config();
+
+        let result = reconcile_gateway(&snapshot, &config, "default", "my-gw");
+
+        // Check the ConfigMap contains TLS config with inline cert data
+        let cm = &result.configmap_upserts()[0];
+        let config_json = cm.data.as_ref().unwrap().get("config.json").unwrap();
+        let gw_config: crate::controller::config::GatewayConfig =
+            serde_json::from_str(config_json).unwrap();
+
+        let listener = &gw_config.listeners[0];
+        assert_eq!(
+            listener.protocol,
+            crate::controller::config::Protocol::Https
+        );
+        let tls = listener.tls.as_ref().expect("Expected TLS config");
+        assert_eq!(tls.mode, crate::controller::config::TlsMode::Terminate);
+        assert_eq!(tls.certificates.len(), 1);
+        assert_eq!(tls.certificates[0].name, "my-tls");
+        assert_eq!(tls.inline_certificates.len(), 1);
+        assert!(
+            tls.inline_certificates[0]
+                .cert_pem
+                .contains("BEGIN CERTIFICATE")
+        );
+        assert!(
+            tls.inline_certificates[0]
+                .key_pem
+                .contains("BEGIN PRIVATE KEY")
+        );
+        assert_eq!(
+            tls.inline_certificates[0].hostnames,
+            vec!["example.com".to_string()]
+        );
+
+        // Listener status should have ResolvedRefs=True
+        let status = result.gateway_status_update("default", "my-gw").unwrap();
+        let listeners = status.listeners.as_ref().unwrap();
+        let resolved_refs = listeners[0]
+            .conditions
+            .iter()
+            .find(|c| c.type_ == "ResolvedRefs")
+            .unwrap();
+        assert_eq!(resolved_refs.status, "True");
+        assert_eq!(resolved_refs.reason, "ResolvedRefs");
+    }
+
+    #[test]
+    fn test_https_listener_missing_secret() {
+        let gc = create_accepted_gateway_class("multiway");
+        // Reference a secret that doesn't exist in the snapshot
+        let gw = create_https_gateway(
+            "default",
+            "my-gw",
+            "multiway",
+            None,
+            "nonexistent-secret",
+            Some("example.com"),
+        );
+
+        let snapshot = WorldSnapshotBuilder::new()
+            .with_gateway_class(gc)
+            .with_gateway(gw)
+            .build();
+        let config = default_config();
+
+        let result = reconcile_gateway(&snapshot, &config, "default", "my-gw");
+
+        // Listener status should have ResolvedRefs=False
+        let status = result.gateway_status_update("default", "my-gw").unwrap();
+        let listeners = status.listeners.as_ref().unwrap();
+        let resolved_refs = listeners[0]
+            .conditions
+            .iter()
+            .find(|c| c.type_ == "ResolvedRefs")
+            .unwrap();
+        assert_eq!(resolved_refs.status, "False");
+        assert_eq!(resolved_refs.reason, "InvalidCertificateRef");
+    }
+
+    #[test]
+    fn test_https_listener_cross_namespace_secret_with_grant() {
+        let gc = create_accepted_gateway_class("multiway");
+        // Gateway in "default", secret in "cert-ns"
+        let gw = create_https_gateway(
+            "default",
+            "my-gw",
+            "multiway",
+            Some("cert-ns"),
+            "cross-tls",
+            Some("example.com"),
+        );
+        let secret = create_tls_secret("cert-ns", "cross-tls");
+
+        // ReferenceGrant in cert-ns allowing default/Gateway → cert-ns/Secret
+        let grant = gateway_crds::ReferenceGrant {
+            metadata: ObjectMeta {
+                name: Some("allow-gw-secrets".to_string()),
+                namespace: Some("cert-ns".to_string()),
+                ..Default::default()
+            },
+            spec: gateway_crds::ReferenceGrantSpec {
+                from: vec![gateway_crds::ReferenceGrantFrom {
+                    group: "gateway.networking.k8s.io".to_string(),
+                    kind: "Gateway".to_string(),
+                    namespace: "default".to_string(),
+                }],
+                to: vec![gateway_crds::ReferenceGrantTo {
+                    group: "".to_string(),
+                    kind: "Secret".to_string(),
+                    name: None,
+                }],
+            },
+        };
+
+        let snapshot = WorldSnapshotBuilder::new()
+            .with_gateway_class(gc)
+            .with_gateway(gw)
+            .with_secret(secret)
+            .with_reference_grant(grant)
+            .build();
+        let config = default_config();
+
+        let result = reconcile_gateway(&snapshot, &config, "default", "my-gw");
+
+        // Should resolve successfully
+        let status = result.gateway_status_update("default", "my-gw").unwrap();
+        let listeners = status.listeners.as_ref().unwrap();
+        let resolved_refs = listeners[0]
+            .conditions
+            .iter()
+            .find(|c| c.type_ == "ResolvedRefs")
+            .unwrap();
+        assert_eq!(resolved_refs.status, "True");
+        assert_eq!(resolved_refs.reason, "ResolvedRefs");
+
+        // ConfigMap should have inline cert
+        let cm = &result.configmap_upserts()[0];
+        let config_json = cm.data.as_ref().unwrap().get("config.json").unwrap();
+        let gw_config: crate::controller::config::GatewayConfig =
+            serde_json::from_str(config_json).unwrap();
+        let tls = gw_config.listeners[0].tls.as_ref().unwrap();
+        assert_eq!(tls.inline_certificates.len(), 1);
+    }
+
+    #[test]
+    fn test_https_listener_cross_namespace_secret_without_grant() {
+        let gc = create_accepted_gateway_class("multiway");
+        // Gateway in "default", secret in "cert-ns", but NO ReferenceGrant
+        let gw = create_https_gateway(
+            "default",
+            "my-gw",
+            "multiway",
+            Some("cert-ns"),
+            "cross-tls",
+            Some("example.com"),
+        );
+        let secret = create_tls_secret("cert-ns", "cross-tls");
+
+        let snapshot = WorldSnapshotBuilder::new()
+            .with_gateway_class(gc)
+            .with_gateway(gw)
+            .with_secret(secret)
+            // No ReferenceGrant!
+            .build();
+        let config = default_config();
+
+        let result = reconcile_gateway(&snapshot, &config, "default", "my-gw");
+
+        // Should NOT resolve — cross-namespace without grant
+        let status = result.gateway_status_update("default", "my-gw").unwrap();
+        let listeners = status.listeners.as_ref().unwrap();
+        let resolved_refs = listeners[0]
+            .conditions
+            .iter()
+            .find(|c| c.type_ == "ResolvedRefs")
+            .unwrap();
+        assert_eq!(resolved_refs.status, "False");
+        assert_eq!(resolved_refs.reason, "InvalidCertificateRef");
     }
 }
