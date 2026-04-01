@@ -1,8 +1,8 @@
 //! Gateway data plane command
 //!
 //! This module provides the CLI command for running the Gateway data plane.
-//! The data plane is a Pingora-based HTTP proxy that reads its configuration
-//! from a file (typically a ConfigMap mounted in Kubernetes).
+//! The data plane is a proxy-core HTTP proxy that reads its configuration
+//! from a Kubernetes ConfigMap via the API.
 
 use miette::Result;
 use tracing::info;
@@ -34,18 +34,18 @@ impl Gateway {
             "Starting Gateway data plane"
         );
 
-        // TODO: This is a placeholder for the Pingora-based data plane
-        // The actual implementation will be in the dataplane crate
+        // TODO: This is a placeholder — the actual data plane is in the dataplane crate
+        // (multiway-dataplane binary) which uses proxy-core for HTTP proxying.
         println!(
             "Gateway data plane starting with config: {}",
             self.config_path
         );
         println!(
-            "This is a placeholder - the Pingora data plane will be implemented in the dataplane crate"
+            "This is a placeholder - the proxy-core data plane runs as a separate binary (multiway-dataplane)"
         );
 
         // For now, just exit successfully
-        // In production, this would start the Pingora server
+        // In production, the data plane runs as multiway-dataplane
         Ok(())
     }
 }

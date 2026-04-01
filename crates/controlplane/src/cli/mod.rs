@@ -74,7 +74,7 @@ pub struct GatewayArgs {
 pub enum CliCommand {
     /// Print the CLI version and exit
     Version,
-    /// Run the gateway data plane (Pingora-based HTTP proxy)
+    /// Run the gateway data plane (proxy-core HTTP proxy)
     Gateway(GatewayArgs),
     /// Run the Gateway API controller (watches GatewayClass, Gateway, HTTPRoute)
     Controller(ControllerArgs),

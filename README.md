@@ -7,7 +7,7 @@ A Kubernetes Gateway API implementation built with Rust, featuring separate cont
 Multiway consists of two main components that run as separate processes in a Kubernetes cluster:
 
 - **Control Plane** (`multiway-controlplane`) - Watches Gateway API resources and configures data plane instances
-- **Data Plane** (`multiway-dataplane`) - HTTP/HTTPS proxy powered by Pingora, with one deployment per Gateway resource
+- **Data Plane** (`multiway-dataplane`) - HTTP/HTTPS proxy powered by proxy-core (monoio-based), with one deployment per Gateway resource
 
 ## Prerequisites
 

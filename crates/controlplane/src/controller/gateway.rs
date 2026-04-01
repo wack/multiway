@@ -8,7 +8,7 @@
 //! - Gateway status reflects the state of the infrastructure
 //!
 //! For this implementation:
-//! - We create a Deployment running the Pingora-based data plane
+//! - We create a Deployment running the proxy-core data plane
 //! - We create a Service to expose the data plane
 //! - We create a ConfigMap with the gateway configuration
 //! - We update the Gateway status with addresses and listener status

@@ -19,7 +19,7 @@ ARG TARGETARCH
 # Install ALL build dependencies (union of controlplane + dataplane needs)
 # - musl-dev, pkgconfig: basic Rust/C compilation
 # - cmake, perl, make: aws-lc-rs (controlplane TLS)
-# - clang, clang-dev, linux-headers, g++: Pingora (dataplane proxy)
+# - clang, clang-dev, linux-headers, g++: monoio/io-uring (dataplane proxy)
 RUN apk add --no-cache \
     musl-dev \
     pkgconfig \

@@ -87,7 +87,7 @@ After fixing the ConfigMap SSA conflict, the ConfigMaps are now being created su
    ```
    Returns HTTP 200 with correct response from backend.
 
-2. **The data plane routing is working correctly.** The Pingora-based proxy successfully:
+2. **The data plane routing is working correctly.** The proxy-core data plane successfully:
    - Loads configuration from ConfigMap
    - Routes requests to backend services via Kubernetes DNS
    - Returns proper HTTP responses
