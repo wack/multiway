@@ -192,30 +192,30 @@ pub fn reconcile_gateway(
     let deployment = build_deployment(&names, gateway, config);
     result = result.upsert_deployment(deployment);
 
-    // Step 4: Get addresses for the Gateway status
-    //
-    // For local development and conformance testing, we use 127.0.0.1 (localhost)
-    // as the Gateway address. This allows external clients to reach the Gateway
-    // via kubectl port-forward.
-    //
-    // For production environments with LoadBalancer support (e.g., MetalLB),
-    // the address should come from the Service's external IP. This is a future
-    // enhancement - for now, we optimize for local development.
-    let addresses = Some(vec![GatewayStatusAddresses {
-        r#type: Some("IPAddress".to_string()),
-        value: "127.0.0.1".to_string(),
-    }]);
+    // Step 4: Derive addresses for the Gateway status from the data plane Service
+    let (addresses, address_assigned) = derive_gateway_addresses(snapshot, gateway, &names);
 
     // Step 5: Count attached routes
     let attached_routes = snapshot.routes_for_gateway(gateway_ns, gateway_name).len() as i32;
 
     // Step 6: Build success status
-    let status = build_gateway_status_with_routes(
+    // The Gateway is always Accepted if we reach here, but Programmed depends on
+    // whether the data plane has an assigned address.
+    let (programmed_reason, programmed_message) = if address_assigned {
+        ("Programmed", "Data plane is programmed")
+    } else {
+        (
+            "AddressNotAssigned",
+            "No address has been assigned to the Gateway",
+        )
+    };
+
+    let status = build_gateway_status_accepted(
         snapshot.now,
         gateway,
-        true,
-        "Accepted",
-        "Gateway is accepted and data plane is provisioned",
+        address_assigned,
+        programmed_reason,
+        programmed_message,
         addresses,
         attached_routes,
     );
@@ -330,6 +330,199 @@ fn build_gateway_status_with_routes(
                             "Listener is programmed".to_string()
                         } else {
                             message.to_string()
+                        },
+                    },
+                ],
+            }
+        })
+        .collect();
+
+    GatewayStatus {
+        addresses,
+        conditions: Some(conditions),
+        listeners: Some(listener_statuses),
+    }
+}
+
+/// Derive Gateway addresses from cluster state.
+///
+/// Address resolution priority:
+/// 1. Static addresses from `gateway.spec.addresses` (user-specified)
+/// 2. LoadBalancer ingress IPs/hostnames from the data plane Service status
+/// 3. Node internal IP (for NodePort/hostPort scenarios, e.g. Kind clusters)
+/// 4. Service ClusterIP
+///
+/// Returns `(addresses, address_assigned)`:
+/// - `addresses`: The resolved addresses for `gateway.status.addresses`
+/// - `address_assigned`: Whether at least one address was found (controls `Programmed` condition)
+fn derive_gateway_addresses(
+    snapshot: &WorldSnapshot,
+    gateway: &Gateway,
+    names: &DataPlaneNames,
+) -> (Option<Vec<GatewayStatusAddresses>>, bool) {
+    // Priority 1: Static addresses from gateway spec
+    if let Some(spec_addresses) = &gateway.spec.addresses
+        && !spec_addresses.is_empty()
+    {
+        let addresses = spec_addresses
+            .iter()
+            .map(|a| GatewayStatusAddresses {
+                r#type: a.r#type.clone(),
+                value: a.value.clone(),
+            })
+            .collect();
+        return (Some(addresses), true);
+    }
+
+    // Priority 2+: Look up the data plane Service in the snapshot
+    let service = snapshot.get_service(names.namespace(), &names.service_name());
+    let Some(svc) = service else {
+        // Service doesn't exist yet (first reconciliation)
+        return (None, false);
+    };
+
+    // Priority 2: LoadBalancer ingress (external IP or hostname)
+    let lb_addresses = svc
+        .status
+        .as_ref()
+        .and_then(|s| s.load_balancer.as_ref())
+        .and_then(|lb| lb.ingress.as_ref())
+        .filter(|ingress| !ingress.is_empty())
+        .map(|ingress| {
+            ingress
+                .iter()
+                .filter_map(|entry| {
+                    if let Some(ip) = &entry.ip {
+                        Some(GatewayStatusAddresses {
+                            r#type: Some("IPAddress".to_string()),
+                            value: ip.clone(),
+                        })
+                    } else {
+                        entry
+                            .hostname
+                            .as_ref()
+                            .map(|hostname| GatewayStatusAddresses {
+                                r#type: Some("Hostname".to_string()),
+                                value: hostname.clone(),
+                            })
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .filter(|addrs: &Vec<GatewayStatusAddresses>| !addrs.is_empty());
+
+    if let Some(addrs) = lb_addresses {
+        return (Some(addrs), true);
+    }
+
+    // Priority 3: Node internal IP (for NodePort/hostPort, e.g. Kind clusters)
+    if let Some(node_ip) = snapshot.get_node_internal_ip() {
+        let addresses = vec![GatewayStatusAddresses {
+            r#type: Some("IPAddress".to_string()),
+            value: node_ip,
+        }];
+        return (Some(addresses), true);
+    }
+
+    // Priority 4: Service ClusterIP
+    let cluster_ip = svc
+        .spec
+        .as_ref()
+        .and_then(|s| s.cluster_ip.as_ref())
+        .filter(|ip| !ip.is_empty() && *ip != "None");
+
+    if let Some(ip) = cluster_ip {
+        let addresses = vec![GatewayStatusAddresses {
+            r#type: Some("IPAddress".to_string()),
+            value: ip.clone(),
+        }];
+        return (Some(addresses), true);
+    }
+
+    // Service exists but has no address yet (pending LoadBalancer, headless service, etc.)
+    (None, false)
+}
+
+/// Build a GatewayStatus where the Gateway is Accepted but Programmed depends on address availability.
+///
+/// This separates the Accepted and Programmed conditions: a Gateway can be Accepted=True
+/// (the controller acknowledges it) while Programmed=False (the data plane doesn't have
+/// a reachable address yet).
+fn build_gateway_status_accepted(
+    now: DateTime<Utc>,
+    gateway: &Gateway,
+    programmed: bool,
+    programmed_reason: &str,
+    programmed_message: &str,
+    addresses: Option<Vec<GatewayStatusAddresses>>,
+    attached_routes: i32,
+) -> GatewayStatus {
+    let time = Time(now);
+    let programmed_status = if programmed { "True" } else { "False" };
+
+    let conditions = vec![
+        Condition {
+            type_: "Accepted".to_string(),
+            status: "True".to_string(),
+            observed_generation: gateway.metadata.generation,
+            last_transition_time: time.clone(),
+            reason: "Accepted".to_string(),
+            message: "Gateway is accepted".to_string(),
+        },
+        Condition {
+            type_: "Programmed".to_string(),
+            status: programmed_status.to_string(),
+            observed_generation: gateway.metadata.generation,
+            last_transition_time: time.clone(),
+            reason: programmed_reason.to_string(),
+            message: programmed_message.to_string(),
+        },
+    ];
+
+    let listener_statuses: Vec<GatewayStatusListeners> = gateway
+        .spec
+        .listeners
+        .iter()
+        .map(|l| {
+            let supported_kinds = match l.protocol.to_uppercase().as_str() {
+                "HTTP" | "HTTPS" => vec![GatewayStatusListenersSupportedKinds {
+                    group: Some("gateway.networking.k8s.io".to_string()),
+                    kind: "HTTPRoute".to_string(),
+                }],
+                _ => vec![],
+            };
+
+            GatewayStatusListeners {
+                name: l.name.clone(),
+                attached_routes,
+                supported_kinds,
+                conditions: vec![
+                    Condition {
+                        type_: "Accepted".to_string(),
+                        status: "True".to_string(),
+                        observed_generation: gateway.metadata.generation,
+                        last_transition_time: time.clone(),
+                        reason: "Accepted".to_string(),
+                        message: "Listener is accepted".to_string(),
+                    },
+                    Condition {
+                        type_: "ResolvedRefs".to_string(),
+                        status: "True".to_string(),
+                        observed_generation: gateway.metadata.generation,
+                        last_transition_time: time.clone(),
+                        reason: "ResolvedRefs".to_string(),
+                        message: "All references resolved".to_string(),
+                    },
+                    Condition {
+                        type_: "Programmed".to_string(),
+                        status: programmed_status.to_string(),
+                        observed_generation: gateway.metadata.generation,
+                        last_transition_time: time.clone(),
+                        reason: programmed_reason.to_string(),
+                        message: if programmed {
+                            "Listener is programmed".to_string()
+                        } else {
+                            programmed_message.to_string()
                         },
                     },
                 ],
@@ -773,6 +966,7 @@ mod tests {
     use crate::core::snapshot::WorldSnapshotBuilder;
     use chrono::TimeZone;
     use gateway_crds::{GatewayClassSpec, GatewaySpec, HttpRouteParentRefs, HttpRouteSpec};
+    use k8s_openapi::api::core::v1::Node;
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 
     fn default_config() -> ControllerConfig {
@@ -1528,5 +1722,313 @@ mod tests {
              Got {:?}. If this becomes Some(0), there's a serialization issue.",
             accepted.observed_generation
         );
+    }
+
+    // ========================================
+    // Gateway Address Derivation Tests
+    // ========================================
+
+    /// Helper: create a Service with a LoadBalancer ingress IP.
+    fn create_service_with_lb_ip(ns: &str, name: &str, ip: &str) -> Service {
+        use k8s_openapi::api::core::v1::{LoadBalancerIngress, LoadBalancerStatus, ServiceStatus};
+        Service {
+            metadata: ObjectMeta {
+                name: Some(name.to_string()),
+                namespace: Some(ns.to_string()),
+                ..Default::default()
+            },
+            spec: Some(ServiceSpec {
+                type_: Some("LoadBalancer".to_string()),
+                cluster_ip: Some("10.0.0.1".to_string()),
+                ..Default::default()
+            }),
+            status: Some(ServiceStatus {
+                load_balancer: Some(LoadBalancerStatus {
+                    ingress: Some(vec![LoadBalancerIngress {
+                        ip: Some(ip.to_string()),
+                        hostname: None,
+                        ports: None,
+                        ip_mode: None,
+                    }]),
+                }),
+                ..Default::default()
+            }),
+        }
+    }
+
+    /// Helper: create a Service with a ClusterIP but no LoadBalancer.
+    fn create_service_with_cluster_ip(ns: &str, name: &str, cluster_ip: &str) -> Service {
+        Service {
+            metadata: ObjectMeta {
+                name: Some(name.to_string()),
+                namespace: Some(ns.to_string()),
+                ..Default::default()
+            },
+            spec: Some(ServiceSpec {
+                type_: Some("ClusterIP".to_string()),
+                cluster_ip: Some(cluster_ip.to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    /// Helper: create a Node with an InternalIP.
+    fn create_ready_node(name: &str, internal_ip: &str) -> Node {
+        use k8s_openapi::api::core::v1::{NodeAddress, NodeCondition, NodeStatus};
+        Node {
+            metadata: ObjectMeta {
+                name: Some(name.to_string()),
+                ..Default::default()
+            },
+            spec: None,
+            status: Some(NodeStatus {
+                addresses: Some(vec![NodeAddress {
+                    type_: "InternalIP".to_string(),
+                    address: internal_ip.to_string(),
+                }]),
+                conditions: Some(vec![NodeCondition {
+                    type_: "Ready".to_string(),
+                    status: "True".to_string(),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            }),
+        }
+    }
+
+    #[test]
+    fn test_gateway_address_from_loadbalancer_ip() {
+        let gc = create_accepted_gateway_class("multiway");
+        let gw = create_gateway("default", "my-gateway", "multiway");
+        // The data plane Service name is `multiway-dp-my-gateway`
+        let svc = create_service_with_lb_ip("default", "multiway-dp-my-gateway", "203.0.113.10");
+
+        let snapshot = WorldSnapshotBuilder::new()
+            .with_gateway_class(gc)
+            .with_gateway(gw)
+            .with_service(svc)
+            .build();
+        let config = default_config();
+
+        let result = reconcile_gateway(&snapshot, &config, "default", "my-gateway");
+
+        let status = result
+            .gateway_status_update("default", "my-gateway")
+            .expect("Expected status update");
+
+        // Should have the LoadBalancer IP as the address
+        let addresses = status.addresses.as_ref().expect("Expected addresses");
+        assert_eq!(addresses.len(), 1);
+        assert_eq!(addresses[0].value, "203.0.113.10");
+        assert_eq!(addresses[0].r#type.as_deref(), Some("IPAddress"));
+
+        // Should be Programmed=True
+        let conditions = status.conditions.as_ref().unwrap();
+        let programmed = conditions.iter().find(|c| c.type_ == "Programmed").unwrap();
+        assert_eq!(programmed.status, "True");
+        assert_eq!(programmed.reason, "Programmed");
+    }
+
+    #[test]
+    fn test_gateway_address_from_cluster_ip_fallback() {
+        let gc = create_accepted_gateway_class("multiway");
+        let gw = create_gateway("default", "my-gateway", "multiway");
+        // Service with ClusterIP but no LoadBalancer and no nodes
+        let svc = create_service_with_cluster_ip("default", "multiway-dp-my-gateway", "10.96.0.42");
+
+        let snapshot = WorldSnapshotBuilder::new()
+            .with_gateway_class(gc)
+            .with_gateway(gw)
+            .with_service(svc)
+            .build();
+        let config = default_config();
+
+        let result = reconcile_gateway(&snapshot, &config, "default", "my-gateway");
+
+        let status = result
+            .gateway_status_update("default", "my-gateway")
+            .expect("Expected status update");
+
+        let addresses = status.addresses.as_ref().expect("Expected addresses");
+        assert_eq!(addresses.len(), 1);
+        assert_eq!(addresses[0].value, "10.96.0.42");
+        assert_eq!(addresses[0].r#type.as_deref(), Some("IPAddress"));
+
+        let conditions = status.conditions.as_ref().unwrap();
+        let programmed = conditions.iter().find(|c| c.type_ == "Programmed").unwrap();
+        assert_eq!(programmed.status, "True");
+    }
+
+    #[test]
+    fn test_gateway_address_from_node_ip_over_cluster_ip() {
+        // When a node IP is available, it takes priority over ClusterIP
+        // (for NodePort/hostPort scenarios like Kind clusters)
+        let gc = create_accepted_gateway_class("multiway");
+        let gw = create_gateway("default", "my-gateway", "multiway");
+        let svc = create_service_with_cluster_ip("default", "multiway-dp-my-gateway", "10.96.0.42");
+        let node = create_ready_node("kind-control-plane", "172.18.0.2");
+
+        let snapshot = WorldSnapshotBuilder::new()
+            .with_gateway_class(gc)
+            .with_gateway(gw)
+            .with_service(svc)
+            .with_node(node)
+            .build();
+        let config = default_config();
+
+        let result = reconcile_gateway(&snapshot, &config, "default", "my-gateway");
+
+        let status = result
+            .gateway_status_update("default", "my-gateway")
+            .expect("Expected status update");
+
+        let addresses = status.addresses.as_ref().expect("Expected addresses");
+        assert_eq!(addresses.len(), 1);
+        // Node IP should be used instead of ClusterIP
+        assert_eq!(addresses[0].value, "172.18.0.2");
+    }
+
+    #[test]
+    fn test_gateway_address_lb_takes_priority_over_node_ip() {
+        // LoadBalancer IP should be preferred over node IP
+        let gc = create_accepted_gateway_class("multiway");
+        let gw = create_gateway("default", "my-gateway", "multiway");
+        let svc = create_service_with_lb_ip("default", "multiway-dp-my-gateway", "203.0.113.10");
+        let node = create_ready_node("kind-control-plane", "172.18.0.2");
+
+        let snapshot = WorldSnapshotBuilder::new()
+            .with_gateway_class(gc)
+            .with_gateway(gw)
+            .with_service(svc)
+            .with_node(node)
+            .build();
+        let config = default_config();
+
+        let result = reconcile_gateway(&snapshot, &config, "default", "my-gateway");
+
+        let status = result
+            .gateway_status_update("default", "my-gateway")
+            .expect("Expected status update");
+
+        let addresses = status.addresses.as_ref().expect("Expected addresses");
+        assert_eq!(addresses[0].value, "203.0.113.10");
+    }
+
+    #[test]
+    fn test_gateway_address_static_from_spec() {
+        // When gateway.spec.addresses is set, use those addresses regardless of Service status
+        let gc = create_accepted_gateway_class("multiway");
+        let mut gw = create_gateway("default", "my-gateway", "multiway");
+        gw.spec.addresses = Some(vec![gateway_crds::GatewayAddresses {
+            r#type: Some("IPAddress".to_string()),
+            value: "192.168.1.100".to_string(),
+        }]);
+
+        let snapshot = WorldSnapshotBuilder::new()
+            .with_gateway_class(gc)
+            .with_gateway(gw)
+            // No Service in snapshot — static addresses should still work
+            .build();
+        let config = default_config();
+
+        let result = reconcile_gateway(&snapshot, &config, "default", "my-gateway");
+
+        let status = result
+            .gateway_status_update("default", "my-gateway")
+            .expect("Expected status update");
+
+        let addresses = status.addresses.as_ref().expect("Expected addresses");
+        assert_eq!(addresses.len(), 1);
+        assert_eq!(addresses[0].value, "192.168.1.100");
+
+        // Should be Programmed=True even without a Service
+        let conditions = status.conditions.as_ref().unwrap();
+        let programmed = conditions.iter().find(|c| c.type_ == "Programmed").unwrap();
+        assert_eq!(programmed.status, "True");
+    }
+
+    #[test]
+    fn test_gateway_no_address_when_service_not_found() {
+        // First reconciliation: no Service exists yet
+        let gc = create_accepted_gateway_class("multiway");
+        let gw = create_gateway("default", "my-gateway", "multiway");
+
+        let snapshot = WorldSnapshotBuilder::new()
+            .with_gateway_class(gc)
+            .with_gateway(gw)
+            // No Service in snapshot
+            .build();
+        let config = default_config();
+
+        let result = reconcile_gateway(&snapshot, &config, "default", "my-gateway");
+
+        let status = result
+            .gateway_status_update("default", "my-gateway")
+            .expect("Expected status update");
+
+        // Addresses should be None
+        assert!(
+            status.addresses.is_none(),
+            "Expected no addresses when data plane Service doesn't exist yet"
+        );
+
+        // Accepted=True (controller acknowledges the Gateway)
+        let conditions = status.conditions.as_ref().unwrap();
+        let accepted = conditions.iter().find(|c| c.type_ == "Accepted").unwrap();
+        assert_eq!(accepted.status, "True");
+
+        // Programmed=False with reason AddressNotAssigned
+        let programmed = conditions.iter().find(|c| c.type_ == "Programmed").unwrap();
+        assert_eq!(programmed.status, "False");
+        assert_eq!(programmed.reason, "AddressNotAssigned");
+    }
+
+    #[test]
+    fn test_gateway_loadbalancer_hostname() {
+        // LoadBalancer with hostname instead of IP (e.g., AWS ELB)
+        use k8s_openapi::api::core::v1::{LoadBalancerIngress, LoadBalancerStatus, ServiceStatus};
+        let gc = create_accepted_gateway_class("multiway");
+        let gw = create_gateway("default", "my-gateway", "multiway");
+        let svc = Service {
+            metadata: ObjectMeta {
+                name: Some("multiway-dp-my-gateway".to_string()),
+                namespace: Some("default".to_string()),
+                ..Default::default()
+            },
+            spec: Some(ServiceSpec {
+                type_: Some("LoadBalancer".to_string()),
+                ..Default::default()
+            }),
+            status: Some(ServiceStatus {
+                load_balancer: Some(LoadBalancerStatus {
+                    ingress: Some(vec![LoadBalancerIngress {
+                        ip: None,
+                        hostname: Some("abc123.us-east-1.elb.amazonaws.com".to_string()),
+                        ports: None,
+                        ip_mode: None,
+                    }]),
+                }),
+                ..Default::default()
+            }),
+        };
+
+        let snapshot = WorldSnapshotBuilder::new()
+            .with_gateway_class(gc)
+            .with_gateway(gw)
+            .with_service(svc)
+            .build();
+        let config = default_config();
+
+        let result = reconcile_gateway(&snapshot, &config, "default", "my-gateway");
+
+        let status = result
+            .gateway_status_update("default", "my-gateway")
+            .expect("Expected status update");
+
+        let addresses = status.addresses.as_ref().expect("Expected addresses");
+        assert_eq!(addresses.len(), 1);
+        assert_eq!(addresses[0].value, "abc123.us-east-1.elb.amazonaws.com");
+        assert_eq!(addresses[0].r#type.as_deref(), Some("Hostname"));
     }
 }
