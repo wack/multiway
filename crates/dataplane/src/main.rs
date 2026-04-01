@@ -35,6 +35,16 @@ use proxy_core::server::ProxyServer;
 /// ConfigMap key for the gateway configuration (matches control plane)
 const CONFIG_KEY: &str = "config.json";
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_key_matches_control_plane() {
+        assert_eq!(CONFIG_KEY, "config.json");
+    }
+}
+
 /// Multiway Gateway Data Plane
 #[derive(Parser, Debug)]
 #[command(name = "multiway-dataplane")]

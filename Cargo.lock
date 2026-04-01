@@ -1606,6 +1606,7 @@ dependencies = [
  "miette",
  "nutype",
  "pretty_assertions",
+ "proxy-core",
  "schemars",
  "serde",
  "serde_json",

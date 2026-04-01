@@ -111,7 +111,6 @@ fn build_gateway_class_status(
 
     GatewayClassStatus {
         conditions: Some(vec![condition]),
-        supported_features: None,
     }
 }
 
@@ -747,7 +746,7 @@ fn build_parent_status(
             port: parent_ref.port,
             section_name: parent_ref.section_name.clone(),
         },
-        conditions: vec![
+        conditions: Some(vec![
             Condition {
                 type_: "Accepted".to_string(),
                 status: status_value.to_string(),
@@ -764,7 +763,7 @@ fn build_parent_status(
                 reason: if accepted { "ResolvedRefs" } else { reason }.to_string(),
                 message: message.to_string(),
             },
-        ],
+        ]),
     }
 }
 
@@ -817,7 +816,6 @@ mod tests {
                     reason: "Accepted".to_string(),
                     message: "Accepted".to_string(),
                 }]),
-                supported_features: None,
             }),
         }
     }
@@ -1085,11 +1083,8 @@ mod tests {
             .unwrap();
         assert_eq!(status.parents.len(), 1);
 
-        let accepted = status.parents[0]
-            .conditions
-            .iter()
-            .find(|c| c.type_ == "Accepted")
-            .unwrap();
+        let conditions = status.parents[0].conditions.as_ref().unwrap();
+        let accepted = conditions.iter().find(|c| c.type_ == "Accepted").unwrap();
         assert_eq!(accepted.status, "False");
         assert_eq!(accepted.reason, "NoMatchingParent");
     }
@@ -1115,11 +1110,8 @@ mod tests {
             .unwrap();
         assert_eq!(status.parents.len(), 1);
 
-        let accepted = status.parents[0]
-            .conditions
-            .iter()
-            .find(|c| c.type_ == "Accepted")
-            .unwrap();
+        let conditions = status.parents[0].conditions.as_ref().unwrap();
+        let accepted = conditions.iter().find(|c| c.type_ == "Accepted").unwrap();
         assert_eq!(accepted.status, "True");
         assert_eq!(accepted.reason, "Accepted");
 
