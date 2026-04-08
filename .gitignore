@@ -27,3 +27,9 @@ target
 
 # Auto-generated Gateway API CRD bindings
 crates/gateway-crds/src/*
+
+# Cached Gateway API conformance test files
+.cache/
+
+# Temporary conformance job files
+conformance/.job-temp.yaml

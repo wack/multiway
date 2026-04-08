@@ -8,6 +8,7 @@ echo "Supported Features: ${SUPPORTED_FEATURES}"
 echo "Conformance Profiles: ${CONFORMANCE_PROFILES:-none}"
 echo "Exempt Features: ${EXEMPT_FEATURES:-none}"
 echo "Skip Tests: ${SKIP_TESTS:-none}"
+echo "Run Test: ${RUN_TEST:-all}"
 echo "Cleanup Base Resources: ${CLEANUP_BASE_RESOURCES}"
 echo "Show Debug: ${SHOW_DEBUG}"
 echo "Report Output: ${REPORT_OUTPUT:-none}"
@@ -34,6 +35,10 @@ fi
 
 if [ -n "${SKIP_TESTS}" ]; then
     ARGS="${ARGS} --skip-tests=${SKIP_TESTS}"
+fi
+
+if [ -n "${RUN_TEST}" ]; then
+    ARGS="${ARGS} --run-test=${RUN_TEST}"
 fi
 
 if [ "${CLEANUP_BASE_RESOURCES}" = "false" ]; then

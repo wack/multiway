@@ -1,0 +1,20 @@
+# Gateway API Conformance Tests - Passing Tests
+#
+# This file lists the conformance tests that are currently passing.
+# Add test names here (one per line) as you implement support for them.
+#
+# Usage:
+#   ./scripts/conformance-tests.sh run --file conformance/passing-tests.txt
+#
+# To see all available tests:
+#   ./scripts/conformance-tests.sh list
+#
+# To see tests grouped by category:
+#   ./scripts/conformance-tests.sh list --categories
+#
+
+# === Start with basic tests ===
+# Uncomment tests as they start passing:
+
+# HTTPRouteSimpleSameNamespace
+# GatewayWithAttachedRoutes
